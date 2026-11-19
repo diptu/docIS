@@ -1,12 +1,14 @@
 import hashlib
 import stat
-from collections.abc import AsyncIterator, Iterator
+import uuid
+from collections.abc import AsyncIterator, Iterator, Sequence
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 from httpx import Response
 
+from app.api.dependencies import get_job_dispatcher
 from app.core.config import Settings, get_settings
 from app.db.session import get_db
 from app.main import app
@@ -40,7 +42,17 @@ def storage_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def client(session: FakeSession, storage_dir: Path) -> Iterator[TestClient]:
+def dispatched() -> list[uuid.UUID]:
+    return []
+
+
+@pytest.fixture
+def client(
+    session: FakeSession, storage_dir: Path, dispatched: list[uuid.UUID]
+) -> Iterator[TestClient]:
+    async def record(job_ids: Sequence[uuid.UUID]) -> None:
+        dispatched.extend(job_ids)
+
     async def override_get_db() -> AsyncIterator[FakeSession]:
         yield session
 
@@ -52,6 +64,7 @@ def client(session: FakeSession, storage_dir: Path) -> Iterator[TestClient]:
     )
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_settings] = lambda: settings
+    app.dependency_overrides[get_job_dispatcher] = lambda: record
     try:
         yield TestClient(app)
     finally:
@@ -113,7 +126,7 @@ def test_upload_each_supported_type(
 
 
 def test_upload_multiple_files_in_one_request(
-    client: TestClient, session: FakeSession
+    client: TestClient, session: FakeSession, dispatched: list[uuid.UUID]
 ) -> None:
     """Several files of different types can be uploaded together."""
     response = client.post(
@@ -131,6 +144,9 @@ def test_upload_multiple_files_in_one_request(
     jobs = [obj for obj in session.added if isinstance(obj, ProcessingJob)]
     assert [str(job.document_id) for job in jobs] == [d["id"] for d in response.json()]
     assert {job.status for job in jobs} == {"queued"}
+    # ...and is sent to the workers only after the commit.
+    assert dispatched == [job.id for job in jobs]
+    assert session.committed
 
 
 def test_file_name_is_stripped_of_directories(client: TestClient) -> None:
@@ -282,3 +298,12 @@ def test_database_failure_removes_stored_files(
         client.post("/documents", files=[("files", ("a.pdf", PDF_BYTES))])
 
     assert stored_files(storage_dir) == []
+
+
+def test_rejected_upload_dispatches_nothing(
+    client: TestClient, dispatched: list[uuid.UUID]
+) -> None:
+    response = client.post("/documents", files=[("files", ("notes.txt", b"hello"))])
+
+    assert response.status_code == 415
+    assert dispatched == []

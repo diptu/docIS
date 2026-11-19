@@ -12,7 +12,7 @@
 - [x] **T 0.6 — Environment Configuration:** Set up environment-based configuration and secure database credentials management.
 
 
-1.1 Document ingestion : Route: /documents
+1.1 Document ingestion :
 
 - [x] **T 1.1.1- Upload multiple PDF files**
 - [x] **T 1.1.2- Upload JPG, PNG and TIFF images**
@@ -29,3 +29,65 @@
 - [x] **T 1.2.4-  Parse CSV files**
 - [x] **T 1.2.5-  Track background processing progress**
 - [x] **T 1.2.6-  Retry failed processing jobs**
+
+2. AI Information Extraction  and validation
+
+
+-  [x] **T 2..1-  Extract all required invoice fields**
+-  [x] **T 2..2-  Extract invoice line items**
+-  [x] **T 2..3-  Return schema-valid JSONs**
+-  [x] **T 2..4-  Represent missing fields as nulls**
+-  [x] **T 2..5-  Validate subtotal, tax and total**
+-  [x] **T 2..6-  Detect duplicate invoices**
+-  [x] **T 2..7-  Detect duplicate invoices**
+-  [x] **T 2..7-  Flag uncertain results for review**
+
+3. Application functionality
+
+-  [] **T 3.1-  View uploaded documents**
+-  [] **T 3.2-  Inspect extracted information**
+-  [] **T 3.2-  Correct extracted fields manually**
+-  [] **T 3.4-  Approve and reject documents**
+-  [] **T 3.5-  Compare PDF against PDF**
+-  [] **T 3.6-  Compare PDF against Excel**
+-  [] **T 3.7-  Search documents by keywords**
+-  [] **T 3.8-  Search documents by keywords**
+-  [] **T 3.8-  Perform semantic search**
+
+4. Testing and delivery
+
+- [] **T4.1 - Automated backend tests**
+- [] **T4.2 -Measure extraction accuracy**
+- [] **T4.3 -Measure processing time and failure rate**
+- [] **T4.4 - Document setup instructions**
+- [] **T4.5 - Architecture and database diagrams**
+- [] **T4.6 - Frontend integration tests**
+- [] **T4.7 -Record application walkthrough**
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

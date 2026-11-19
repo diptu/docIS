@@ -10,12 +10,15 @@ from anyio import to_thread
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.document import Document, DocumentStatus
+from app.models.document_chunk import DocumentChunk
 from app.models.document_page import DocumentPage
 from app.models.document_sheet import DocumentSheet
 from app.processing.extract import PROCESSABLE_TYPES, extract_content
 from app.processing.ocr import OcrConfig
 from app.processing.progress import ProgressCallback, Stage, ignore_progress
 from app.repositories.document import DocumentRepository
+from app.search.chunking import Chunk, build_chunks
+from app.search.embeddings import Embedder
 from app.storage.local import LocalStorage
 
 logger = logging.getLogger(__name__)
@@ -36,10 +39,13 @@ class DocumentProcessor:
         session_factory: async_sessionmaker[AsyncSession],
         storage: LocalStorage,
         ocr_config: OcrConfig | None = None,
+        embedder: Embedder | None = None,
     ) -> None:
         self.session_factory = session_factory
         self.storage = storage
         self.ocr_config = ocr_config or OcrConfig()
+        # None disables semantic search; chunks are still keyword-indexed.
+        self.embedder = embedder
 
     @staticmethod
     def can_process(document: Document) -> bool:
@@ -113,8 +119,46 @@ class DocumentProcessor:
                         for sheet in result.sheets
                     ],
                 )
+                chunks = build_chunks(
+                    [(page.page_number, page.text) for page in result.pages],
+                    [(s.sheet_number, s.name, s.rows) for s in result.sheets],
+                )
+                await repository.replace_chunks(
+                    document_id, await self._index(document_id, chunks, progress)
+                )
                 await repository.set_status(document_id, DocumentStatus.PROCESSED)
                 progress(Stage.SAVING, 1, 1)
             except Exception:
                 await session.rollback()
                 raise
+
+    async def _index(
+        self,
+        document_id: uuid.UUID,
+        chunks: list[Chunk],
+        progress: ProgressCallback,
+    ) -> list[DocumentChunk]:
+        """Search rows for the chunks, embedded if semantic search is on."""
+        progress(Stage.INDEXING, 0, 1)
+        embeddings: list[list[float] | None] = [None] * len(chunks)
+        if self.embedder is not None and chunks:
+            embeddings = list(
+                await to_thread.run_sync(
+                    self.embedder.embed_passages, [chunk.content for chunk in chunks]
+                )
+            )
+        progress(Stage.INDEXING, 1, 1)
+        return [
+            DocumentChunk(
+                document_id=document_id,
+                chunk_index=index,
+                page_number=chunk.page_number,
+                sheet_number=chunk.sheet_number,
+                sheet_name=chunk.sheet_name,
+                content=chunk.content,
+                embedding=embedding,
+            )
+            for index, (chunk, embedding) in enumerate(
+                zip(chunks, embeddings, strict=True)
+            )
+        ]

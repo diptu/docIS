@@ -46,6 +46,7 @@ erDiagram
     PROCESSING_JOBS {
         uuid id PK
         uuid document_id FK "NOT NULL, ON DELETE CASCADE, indexed"
+        varchar(30) kind "NOT NULL, extract_content | extract_invoice"
         varchar(20) status "NOT NULL, queued | running | succeeded | failed"
         varchar(50) stage "current step, e.g. ocr"
         int progress_current "NOT NULL, steps done in stage"
@@ -63,7 +64,62 @@ erDiagram
     }
 
     DOCUMENTS ||--o{ DOCUMENT_PAGES : "has pages"
+    INVOICES {
+        uuid id PK
+        uuid document_id FK "NOT NULL, UNIQUE, ON DELETE CASCADE"
+        boolean is_invoice "NOT NULL"
+        varchar(100) invoice_number "indexed"
+        date invoice_date
+        date due_date
+        varchar(10) currency
+        varchar(100) purchase_order_number
+        varchar(255) payment_terms
+        varchar(255) vendor_name "plus vendor_address, _tax_id, _email, _phone"
+        varchar(255) customer_name "plus customer_address, _tax_id, _email, _phone"
+        numeric subtotal "18,4"
+        numeric tax "18,4"
+        numeric total_amount "18,4"
+        numeric amount_due "18,4"
+        jsonb uncertain_fields "NOT NULL, field names"
+        varchar(100) invoice_number_key "normalised, for duplicates"
+        varchar(255) vendor_key "tax:<id> or name:<name>"
+        varchar(100) model "NOT NULL"
+        int input_tokens "NOT NULL"
+        int output_tokens "NOT NULL"
+        int cache_read_tokens "NOT NULL"
+        timestamptz created_at "NOT NULL"
+        timestamptz updated_at "NOT NULL"
+    }
+
+    INVOICE_LINE_ITEMS {
+        uuid id PK
+        uuid invoice_id FK "NOT NULL, ON DELETE CASCADE"
+        int line_number "NOT NULL, 1-based, unique per invoice"
+        text description
+        varchar(100) product_code
+        numeric quantity "18,4"
+        varchar(50) unit
+        numeric unit_price "18,4"
+        numeric tax_rate "7,4, percent"
+        numeric amount "18,4"
+    }
+
+    VALIDATION_ERRORS {
+        uuid id PK
+        uuid document_id FK "NOT NULL, ON DELETE CASCADE"
+        varchar(50) code "NOT NULL, e.g. total, duplicate"
+        varchar(20) severity "NOT NULL, error | warning"
+        text message "NOT NULL"
+        jsonb details "NOT NULL"
+        boolean resolved "NOT NULL, default false"
+        timestamptz resolved_at
+        timestamptz created_at "NOT NULL"
+    }
+
     DOCUMENTS ||--o{ PROCESSING_JOBS : "processed by"
+    DOCUMENTS ||--o| INVOICES : "extracted as"
+    INVOICES ||--o{ INVOICE_LINE_ITEMS : "has lines"
+    DOCUMENTS ||--o{ VALIDATION_ERRORS : "has problems"
     DOCUMENTS ||--o{ DOCUMENT_SHEETS : "has sheets"
 ```
 
@@ -128,16 +184,22 @@ unique; deleting a document deletes its sheets.
 
 Source: [`app/models/processing_job.py`](../app/models/processing_job.py)
 
-Durable background work queue. Uploading a processable document inserts a
-`queued` job in the same transaction. Worker processes (`python -m
-app.worker`) claim the oldest queued job with `FOR UPDATE SKIP LOCKED`, set
-it `running`, and write `stage` / `progress_current` / `progress_total` plus
-`heartbeat_at` about once a second. A `running` job whose heartbeat is older
-than `JOB_LEASE_SECONDS` (default 300) belonged to a dead worker and is put
-back to `queued`; `attempts` counts each claim. Exposed via
+Background job state for Celery. Uploading a processable document inserts
+a `queued` job in the same transaction; after commit the API publishes a
+`documents.process` Celery task (Redis broker) carrying the job ID. The task
+claims the row atomically (`SELECT … FOR UPDATE`), so a duplicate delivery
+does nothing; it sets the job `running` and writes `stage` /
+`progress_current` / `progress_total` plus `heartbeat_at` about once a
+second. Tasks are acknowledged late, so a task whose worker process dies is
+redelivered. Celery beat runs `documents.recover` every
+`JOB_RECOVERY_INTERVAL_SECONDS`: `running` jobs whose heartbeat is older
+than `JOB_LEASE_SECONDS` are requeued and re-sent, and `queued` jobs never
+picked up within `JOB_REDISPATCH_AFTER_SECONDS` (e.g. the broker was down at
+upload) are re-sent. `attempts` counts each claim. Exposed via
 `GET /documents/{id}/processing`.
 
 Retries: a failed attempt goes back to `queued` with `next_run_at` set by
+Celery's `retry(countdown=…)` using
 exponential backoff (`JOB_RETRY_BASE_SECONDS` × 2^(attempt−1), capped at
 `JOB_RETRY_MAX_SECONDS`, ±20% jitter) and `error` holding the last failure,
 until `attempts` reaches `max_attempts` (`JOB_MAX_ATTEMPTS`); then the job
@@ -147,6 +209,37 @@ failed rather than requeued, so a crashing document cannot loop forever.
 `POST /documents/{id}/processing/retry` adds a fresh job for a failed
 document. The partial unique index `uq_processing_jobs_active_document`
 allows at most one `queued`/`running` job per document.
+
+### `invoices`, `invoice_line_items`, `validation_errors`
+
+Source: [`app/models/invoice.py`](../app/models/invoice.py)
+
+After an `extract_content` job succeeds, an `extract_invoice` job is queued
+in the same transaction. It renders the document's pages and sheets as text
+and asks Claude (`LLM_MODEL`, default `claude-opus-5-5`) for an
+`InvoiceData` result via structured outputs, so the reply always matches the
+schema. The result is normalised (blank strings become `null`, currency
+upper-cased) and stored as one `invoices` row (every extracted field is a
+column; anything not stated is NULL) plus one `invoice_line_items` row per
+billed line, in document order. Amounts are exact `NUMERIC`. The model and
+token usage are kept on the invoice. Re-extraction replaces the invoice,
+its line items and the document's validation errors.
+
+`validation_errors` lists problems for human review. Severity `error`:
+a failed amount check (`line_amounts`, `lines_subtotal`, `tax_amount`,
+`total`, `amount_due`; computed with exact decimal arithmetic),
+`missing_fields`, or `duplicate` (same stored file by SHA-256, or same
+`vendor_key` + `invoice_number_key`). Severity `warning`:
+`possible_duplicate` (same vendor, date and total), `low_ocr_confidence`
+(pages below `REVIEW_MIN_OCR_CONFIDENCE`), `model_uncertain` (fields Claude
+listed in `uncertain_fields`), `not_invoice`. When a new upload duplicates
+an earlier one, the earlier document gets (or extends) a duplicate error in
+the same transaction. A document needs review while it has any unresolved
+error; `PATCH /documents/{id}/validation-errors/{error_id}` resolves one
+and `GET /invoices/review` lists documents with unresolved errors.
+
+A failed extraction does not fail the document; retrying it re-runs only
+the extraction.
 
 ### Indexes
 
@@ -163,4 +256,9 @@ allows at most one `queued`/`running` job per document.
 | `pk_processing_jobs`    | `id`     |
 | `ix_processing_jobs_document_id` | `document_id` |
 | `ix_processing_jobs_status_created_at` | `status, created_at` (queue order) |
+| `uq_invoices_document_id` | `document_id` (unique) |
+| `ix_invoices_invoice_number` | `invoice_number` |
+| `ix_invoices_vendor_key_invoice_number_key` | `vendor_key, invoice_number_key` (duplicate lookup) |
+| `uq_invoice_line_items_invoice_id_line_number` | `invoice_id, line_number` |
+| `ix_validation_errors_document_id_resolved` | `document_id, resolved` (review queue) |
 | `uq_processing_jobs_active_document` | `document_id` — unique, partial: `WHERE status IN ('queued','running')` |

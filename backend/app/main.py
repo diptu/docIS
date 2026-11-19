@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, FastAPI, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.routes import documents
+from app.api.routes import compare, documents, invoices, search
 from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
 from app.db.session import close_db, get_db
@@ -61,4 +61,7 @@ async def database_health(
 
 app.include_router(health_router)
 app.include_router(documents.router)
+app.include_router(invoices.router)
+app.include_router(compare.router)
+app.include_router(search.router)
 register_exception_handlers(app)

@@ -28,6 +28,12 @@ class ConflictError(AppError):
     status_code = status.HTTP_409_CONFLICT
 
 
+class ServiceUnavailableError(AppError):
+    """A feature is disabled or its backing service is unavailable."""
+
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+
+
 class UnsupportedFileTypeError(AppError):
     """The uploaded file is not an accepted type."""
 

@@ -87,6 +87,21 @@ tasks:
     cmds:
       - uv run fastapi dev app/main.py
 
+  worker:
+    desc: Start a Celery worker (processes uploaded documents)
+    cmds:
+      - uv run celery -A app.worker.celery_app worker --loglevel=INFO --queues=documents --concurrency=2
+
+  beat:
+    desc: Start Celery beat (schedules recovery of stuck jobs; run exactly one)
+    cmds:
+      - uv run celery -A app.worker.celery_app beat --loglevel=INFO --schedule=/tmp/docis-celerybeat-schedule
+
+  reindex:
+    desc: Rebuild the search index for every processed document
+    cmds:
+      - uv run python -m app.search.reindex
+
   start:
     desc: Start FastAPI production server
     cmds:
@@ -134,6 +149,25 @@ tasks:
     desc: Run API tests
     cmds:
       - uv run pytest tests/api -v
+
+  # ==========================================
+  # EXTRACTION ACCURACY (T4.2)
+  # ==========================================
+
+  eval-generate:
+    desc: Generate the synthetic labelled invoice dataset
+    cmds:
+      - uv run python -m evaluation generate --count {{.COUNT | default 40}}
+
+  eval-check:
+    desc: Check the evaluation harness (oracle model; free, expect 100%)
+    cmds:
+      - uv run python -m evaluation run --llm oracle
+
+  eval:
+    desc: Measure extraction accuracy with Claude (costs money; needs ANTHROPIC_API_KEY)
+    cmds:
+      - uv run python -m evaluation run --llm claude --yes {{.CLI_ARGS}}
 
   # ==========================================
   # DATABASE

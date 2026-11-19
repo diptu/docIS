@@ -2,7 +2,9 @@ name: docis
 
 services:
   db:
-    image: postgres:18-alpine
+    # postgres:18-alpine + pgvector (see db/Dockerfile).
+    build: ./db
+    image: docis-db
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-docis}
@@ -28,6 +30,7 @@ services:
     environment: &app-env
       APP_NAME: ${APP_NAME:-docIS}
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-docis}:${POSTGRES_PASSWORD:-docis}@db:5432/${POSTGRES_DB:-docis}
+      CELERY_BROKER_URL: redis://redis:6379/0
       JOB_MAX_ATTEMPTS: ${JOB_MAX_ATTEMPTS:-3}
       JOB_RETRY_BASE_SECONDS: ${JOB_RETRY_BASE_SECONDS:-30}
       JOB_RETRY_MAX_SECONDS: ${JOB_RETRY_MAX_SECONDS:-900}
@@ -49,38 +52,98 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
       migrate:
         condition: service_completed_successfully
 
-  # Runs document processing jobs. Scale with:
+  # Message broker for Celery. Append-only persistence keeps queued tasks
+  # across a Redis restart.
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    # Reachable from the host for local development (task worker/beat).
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Celery worker: runs document processing tasks. Scale with
   #   docker compose up -d --scale worker=3
   worker:
     image: docis-backend
-    command: ["python", "-m", "app.worker"]
+    command:
+      - celery
+      - -A
+      - app.worker.celery_app
+      - worker
+      - --loglevel=INFO
+      - --queues=documents
+      - --concurrency=${WORKER_CONCURRENCY:-2}
     restart: unless-stopped
     environment:
       <<: *app-env
       STORAGE_DIR: /app/storage
       OCR_LANGUAGES: ${OCR_LANGUAGES:-eng}
-      WORKER_HEARTBEAT_FILE: /tmp/worker-heartbeat
+      # One Tesseract thread per OCR process; parallelism comes from
+      # WORKER_CONCURRENCY. Avoids OpenMP threads fighting over CPU.
+      OMP_THREAD_LIMIT: "1"
       JOB_LEASE_SECONDS: ${JOB_LEASE_SECONDS:-300}
+      JOB_REDISPATCH_AFTER_SECONDS: ${JOB_REDISPATCH_AFTER_SECONDS:-600}
+      # AI invoice extraction. Without a key, extraction jobs fail with an
+      # authentication error (content extraction is unaffected).
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      INVOICE_EXTRACTION_ENABLED: ${INVOICE_EXTRACTION_ENABLED:-true}
+      LLM_MODEL: ${LLM_MODEL:-claude-opus-5-5}
+      LLM_EFFORT: ${LLM_EFFORT:-medium}
     volumes:
       - documents-data:/app/storage
-    # Let the current job finish on shutdown; an interrupted job is
-    # requeued automatically once its lease expires.
+    # Celery finishes running tasks on SIGTERM (warm shutdown); a task cut
+    # off anyway is redelivered (acks_late) or recovered by beat.
     stop_grace_period: 2m
     healthcheck:
       test:
-        - CMD
-        - python
-        - -c
-        - "import os, sys, time; sys.exit(time.time() - os.path.getmtime('/tmp/worker-heartbeat') > 60)"
-      interval: 15s
-      timeout: 5s
-      start_period: 15s
+        - CMD-SHELL
+        - celery -A app.worker.celery_app inspect ping --destination celery@$$HOSTNAME --timeout 5
+      interval: 30s
+      timeout: 15s
+      start_period: 20s
       retries: 3
     depends_on:
       db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # Celery beat: schedules documents.recover, which re-dispatches jobs whose
+  # task message was lost and recovers jobs whose worker died. Run exactly one.
+  beat:
+    image: docis-backend
+    command:
+      - celery
+      - -A
+      - app.worker.celery_app
+      - beat
+      - --loglevel=INFO
+      - --schedule=/tmp/celerybeat-schedule
+    restart: unless-stopped
+    environment:
+      <<: *app-env
+      # Beat only decides *when* recovery runs; the recovery itself executes
+      # on a worker, which holds the lease/redispatch settings.
+      JOB_RECOVERY_INTERVAL_SECONDS: ${JOB_RECOVERY_INTERVAL_SECONDS:-60}
+    healthcheck:
+      disable: true
+    depends_on:
+      redis:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
@@ -88,3 +151,4 @@ services:
 volumes:
   db-data:
   documents-data:
+  redis-data:

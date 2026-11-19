@@ -4,14 +4,25 @@ Retry policy: which failures are worth retrying, and when.
 
 import random
 
+import anthropic
+
+from app.extraction.document_text import DocumentTooLargeError, EmptyDocumentError
+from app.extraction.llm import ExtractionError
 from app.processing.processor import DocumentNotProcessableError
 
 # Failures that another attempt cannot fix: the document is gone or has no
-# extractor, or its stored original is missing.
+# extractor, its stored original is missing, or the extraction input/output
+# is unusable (too large, empty, refused, cut off).
 PERMANENT_ERRORS: tuple[type[BaseException], ...] = (
     DocumentNotProcessableError,
     FileNotFoundError,
+    DocumentTooLargeError,
+    EmptyDocumentError,
+    ExtractionError,
 )
+# Claude API statuses worth retrying: timeout, conflict, rate limit, and all
+# server-side errors (5xx, including 529 overloaded).
+RETRYABLE_API_STATUSES = {408, 409, 429}
 
 
 def is_retryable(error: BaseException) -> bool:
@@ -21,7 +32,16 @@ def is_retryable(error: BaseException) -> bool:
     timeouts, resource pressure) are common, and the attempt limit bounds
     the cost of retrying a deterministic failure.
     """
-    return not isinstance(error, PERMANENT_ERRORS)
+    if isinstance(error, PERMANENT_ERRORS):
+        return False
+    if isinstance(error, anthropic.APIStatusError):
+        # Other 4xx (bad request, authentication, permission, not found)
+        # need a code or configuration fix, not another attempt.
+        return error.status_code >= 500 or error.status_code in RETRYABLE_API_STATUSES
+    if isinstance(error, anthropic.APIConnectionError):  # includes timeouts
+        return True
+    # Client-side SDK errors, e.g. missing credentials, are configuration.
+    return not isinstance(error, anthropic.AnthropicError)
 
 
 def retry_delay(

@@ -15,6 +15,8 @@ class Stage(StrEnum):
     OCR = "ocr"
     PARSING_SHEETS = "parsing_sheets"
     PARSING_CSV = "parsing_csv"
+    EXTRACTING_INVOICE = "extracting_invoice"
+    INDEXING = "indexing"
     SAVING = "saving"
 
 

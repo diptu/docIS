@@ -12,11 +12,17 @@ from app.db.session import get_db
 from app.repositories.document import DocumentRepository
 from app.services.document import DocumentService
 from app.storage.local import LocalStorage
+from app.worker.dispatch import JobDispatcher, celery_dispatcher
 
 
 def get_storage(settings: Annotated[Settings, Depends(get_settings)]) -> LocalStorage:
     """Provide the configured file storage."""
     return LocalStorage(settings.storage_dir)
+
+
+def get_job_dispatcher() -> JobDispatcher:
+    """Provide the function that sends committed jobs to Celery."""
+    return celery_dispatcher
 
 
 def get_document_repository(
@@ -30,6 +36,7 @@ def get_document_service(
     repository: Annotated[DocumentRepository, Depends(get_document_repository)],
     storage: Annotated[LocalStorage, Depends(get_storage)],
     settings: Annotated[Settings, Depends(get_settings)],
+    dispatcher: Annotated[JobDispatcher, Depends(get_job_dispatcher)],
 ) -> DocumentService:
     """Provide a DocumentService wired to the request's session."""
     return DocumentService(
@@ -38,4 +45,5 @@ def get_document_service(
         max_file_size=settings.max_upload_size_bytes,
         max_files=settings.max_files_per_upload,
         max_attempts=settings.job_max_attempts,
+        dispatcher=dispatcher,
     )

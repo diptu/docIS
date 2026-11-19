@@ -14,6 +14,7 @@ import datetime as dt
 import decimal
 import io
 import math
+import re
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -204,18 +205,34 @@ def parse_xls(
         book.release_resources()
 
 
+_QUOTED = re.compile(r'"[^"]*"')
+_DECIMAL_COMMA = re.compile(r"(?<=\d),(?=\d)")
+
+
 def detect_delimiter(sample: str) -> str:
     """Guess the delimiter from a text sample; defaults to a comma.
 
-    Only complete lines are sniffed, and only common delimiters are
-    considered, so prose with stray punctuation cannot pick an odd one.
+    Picks the candidate occurring on the most lines (ties: most often),
+    ignoring quoted text and commas between digits, which are decimal
+    commas ("6.845,38" in a semicolon-separated German export). Only
+    complete lines and common delimiters are considered.
     """
     if "\n" in sample:
         sample = sample[: sample.rindex("\n")]
-    try:
-        return csv.Sniffer().sniff(sample, delimiters=CSV_DELIMITERS).delimiter
-    except csv.Error:
-        return ","
+    lines = [line for line in sample.splitlines() if line.strip()][:200]
+    best, best_score = ",", (0, 0)
+    for delimiter in CSV_DELIMITERS:
+        lines_with = occurrences = 0
+        for line in lines:
+            text = _QUOTED.sub("", line)
+            if delimiter == ",":
+                text = _DECIMAL_COMMA.sub("", text)
+            count = text.count(delimiter)
+            lines_with += count > 0
+            occurrences += count
+        if (lines_with, occurrences) > best_score:
+            best, best_score = delimiter, (lines_with, occurrences)
+    return best
 
 
 def _read_csv(

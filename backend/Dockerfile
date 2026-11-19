@@ -40,7 +40,9 @@ RUN apt-get update \
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    EMBEDDING_CACHE_DIR=/app/models \
+    HF_HUB_DISABLE_TELEMETRY=1
 
 RUN groupadd --system app && useradd --system --gid app --home /app app
 
@@ -49,6 +51,13 @@ WORKDIR /app
 COPY --from=builder --chown=app:app /app /app
 
 RUN mkdir -p /app/storage && chown app:app /app/storage
+
+# Bake the semantic-search embedding model (~64 MB) into the image, so
+# containers never download it at runtime and work offline.
+RUN python -c "from app.search.embeddings import FastEmbedEmbedder; \
+from pathlib import Path; \
+FastEmbedEmbedder(Path('/app/models')).embed_query('warm up')" \
+    && chown -R app:app /app/models
 
 USER app
 

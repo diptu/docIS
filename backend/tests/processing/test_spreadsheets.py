@@ -222,6 +222,10 @@ def test_parse_csv_rejects_undecodable_text(tmp_path: Path) -> None:
     [
         ("a;b;c\n1;2;3\n4;5;", ";"),  # last partial line ignored
         ("just one column\nanother\n", ","),  # nothing to detect: default
+        # German export: decimal commas must not be mistaken for delimiters.
+        ("Posten;Betrag\nBolts;6.845,38 EUR\nNuts;447,83 EUR\n", ";"),
+        ('Item,Amount\nTotal,"6,845.38 GBP"\nTax,"447.83 GBP"\n', ","),
+        ("a\tb\tc\n1,5\t2\t3\n", "\t"),
         ("", ","),
     ],
 )

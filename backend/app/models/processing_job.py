@@ -32,6 +32,15 @@ class JobStatus(StrEnum):
     FAILED = "failed"
 
 
+class JobKind(StrEnum):
+    """What a job does. A document's jobs run one at a time, in order."""
+
+    # Text layer, OCR and spreadsheet parsing.
+    EXTRACT_CONTENT = "extract_content"
+    # AI extraction of invoice fields; queued when content extraction succeeds.
+    EXTRACT_INVOICE = "extract_invoice"
+
+
 class ProcessingJob(TimestampMixin, Base):
     """A unit of background work: extracting one document's content.
 
@@ -71,6 +80,12 @@ class ProcessingJob(TimestampMixin, Base):
         ForeignKey("documents.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
+    )
+    kind: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+        default=JobKind.EXTRACT_CONTENT,
+        server_default=JobKind.EXTRACT_CONTENT.value,
     )
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default=JobStatus.QUEUED

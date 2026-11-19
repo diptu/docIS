@@ -3,10 +3,13 @@ Document request and response schemas.
 """
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
+
+from app.extraction.schema import InvoiceData
 
 
 class DocumentBase(BaseModel):
@@ -49,6 +52,7 @@ class ProcessingJobRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    kind: str
     status: str
     stage: str | None
     progress_current: int
@@ -111,3 +115,243 @@ class DocumentSheetRows(DocumentSheetSummary):
 
     offset: int
     rows: list[list[Any]]
+
+
+class InvoiceExtractionUsage(BaseModel):
+    """Model and token usage of an extraction."""
+
+    model: str
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+
+
+class ValidationCheckRead(BaseModel):
+    """One arithmetic check of the extracted amounts."""
+
+    code: str
+    status: str  # passed | failed | skipped
+    message: str
+    expected: str | None
+    actual: str | None
+
+
+class ValidationRead(BaseModel):
+    """Amount validation, computed from the stored invoice and line items:
+    ``failed`` if any check failed, ``passed`` if at least one passed and
+    none failed, ``not_checked`` otherwise."""
+
+    status: str
+    checks: list[ValidationCheckRead]
+
+
+class DuplicateRead(BaseModel):
+    """Another document that duplicates this invoice."""
+
+    document_id: uuid.UUID
+    file_name: str
+    match: str  # same_file | same_invoice_number | possible
+
+
+class ValidationErrorRead(BaseModel):
+    """A problem found in the extraction, to be reviewed and resolved."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    code: str
+    severity: str  # error | warning
+    message: str
+    details: dict[str, Any]
+    resolved: bool
+    resolved_at: datetime | None
+    created_at: datetime
+
+
+class ValidationErrorUpdate(BaseModel):
+    """Resolve (or reopen) a validation error."""
+
+    resolved: bool
+
+
+class ReviewRead(BaseModel):
+    """Whether a person should check this extraction: true while any
+    validation error is unresolved."""
+
+    needs_review: bool
+    errors: list[ValidationErrorRead]
+
+
+class InvoiceRead(BaseModel):
+    """Extracted invoice data of a document.
+
+    ``invoice`` always has every field; values not found in the document are
+    ``null`` and ``line_items`` may be empty.
+    """
+
+    document_id: uuid.UUID
+    invoice: InvoiceData
+    corrected_at: datetime | None
+    validation: ValidationRead
+    duplicates: list[DuplicateRead]
+    review: ReviewRead
+    extraction: InvoiceExtractionUsage
+    extracted_at: datetime
+
+
+class ReviewQueueItem(BaseModel):
+    """An extraction waiting for human review."""
+
+    document_id: uuid.UUID
+    file_name: str
+    invoice_number: str | None
+    vendor_name: str | None
+    invoice_date: date | None
+    total_amount: Decimal | None
+    currency: str | None
+    errors: list[ValidationErrorRead]  # unresolved only
+    extracted_at: datetime
+
+
+class ProcessingSummary(BaseModel):
+    """The latest processing job of a document, in brief."""
+
+    kind: str
+    status: str
+    stage: str | None
+
+
+class InvoiceSummary(BaseModel):
+    """Key fields of a document's extracted invoice."""
+
+    is_invoice: bool
+    invoice_number: str | None
+    vendor_name: str | None
+    invoice_date: date | None
+    total_amount: Decimal | None
+    currency: str | None
+    corrected: bool
+
+
+class DocumentListItem(DocumentRead):
+    """A document in the list, with its processing and review state."""
+
+    processing: ProcessingSummary | None
+    invoice: InvoiceSummary | None
+    unresolved_errors: int
+
+
+class DocumentList(BaseModel):
+    """A page of documents; ``total`` counts every match."""
+
+    items: list[DocumentListItem]
+    total: int
+    offset: int
+    limit: int
+
+
+class InvoiceCorrectionRead(BaseModel):
+    """One manual correction: each changed field's old and new value."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    changes: dict[str, dict[str, Any]]
+    created_at: datetime
+
+
+# ---------------------------------------------------------------- comparison
+
+
+class DocumentBrief(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    file_name: str
+    file_type: str
+    status: str
+
+
+class FieldComparisonRead(BaseModel):
+    field: str
+    left: Any
+    right: Any
+    status: str  # equal | different | left_missing | right_missing | both_missing
+
+
+class LinePairRead(BaseModel):
+    left_line: int | None
+    right_line: int | None
+    matched_by: str | None  # product_code | description
+    status: str  # equal | different | left_only | right_only
+    fields: list[FieldComparisonRead]
+
+
+class InvoiceComparisonRead(BaseModel):
+    fields: list[FieldComparisonRead]
+    line_items: list[LinePairRead]
+    fields_different: int
+    lines_different: int
+    lines_unmatched: int
+
+
+class TextComparisonRead(BaseModel):
+    similarity: float
+    added: int
+    removed: int
+    diff: list[str]
+    truncated: bool
+
+
+class RowCheckRead(BaseModel):
+    sheet_name: str
+    row_number: int
+    status: str  # found | partial | missing
+    cells: list[Any]
+    missing: list[Any]
+
+
+class RowReconciliationRead(BaseModel):
+    """Spreadsheet rows checked against the other document's text."""
+
+    spreadsheet: str  # left | right
+    found: int
+    partial: int
+    missing: int
+    rows: list[RowCheckRead]
+
+
+class ComparisonRead(BaseModel):
+    """Sections are null when not applicable; ``notes`` says why."""
+
+    left: DocumentBrief
+    right: DocumentBrief
+    invoice: InvoiceComparisonRead | None
+    text: TextComparisonRead | None
+    rows: RowReconciliationRead | None
+    notes: list[str]
+
+
+# -------------------------------------------------------------------- search
+
+
+class SearchSnippetRead(BaseModel):
+    """A matching passage. Highlighted terms are wrapped in U+0002 and
+    U+0003 (keyword matches only)."""
+
+    text: str
+    page_number: int | None
+    sheet_name: str | None
+
+
+class SearchHitRead(BaseModel):
+    document: DocumentBrief
+    score: float
+    matched: list[str]  # keyword | semantic | file_name
+    snippets: list[SearchSnippetRead]
+
+
+class SearchResultsRead(BaseModel):
+    query: str
+    mode: str
+    hits: list[SearchHitRead]

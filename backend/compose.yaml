@@ -1,0 +1,46 @@
+name: docis
+
+services:
+  db:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-docis}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-docis}
+      POSTGRES_DB: ${POSTGRES_DB:-docis}
+    ports:
+      - "${POSTGRES_PORT:-5434}:5432"
+    volumes:
+      - db-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build: .
+    image: docis-backend
+    command: ["alembic", "upgrade", "head"]
+    environment: &app-env
+      APP_NAME: ${APP_NAME:-docIS}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-docis}:${POSTGRES_PASSWORD:-docis}@db:5432/${POSTGRES_DB:-docis}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    image: docis-backend
+    restart: unless-stopped
+    environment: *app-env
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  db-data:

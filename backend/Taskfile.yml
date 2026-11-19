@@ -1,0 +1,226 @@
+
+version: "3"
+
+vars:
+  APP: app.main:app
+
+tasks:
+  # ==========================================
+  # PROJECT SETUP
+  # ==========================================
+
+  install:
+    desc: Install project dependencies
+    cmds:
+      - uv sync --all-groups
+
+  init:
+    desc: Create project directory structure
+    cmds:
+      - |
+        mkdir -p \
+          app/api/routes \
+          app/core \
+          app/db \
+          app/models \
+          app/schema \
+          app/repositories \
+          app/services \
+          app/middleware \
+          app/utils \
+          migrations/versions \
+          docs \
+          tests/api \
+          tests/services \
+          tests/repositories \
+          .github/workflows
+
+      - |
+        touch \
+          app/__init__.py \
+          app/api/__init__.py \
+          app/api/dependencies.py \
+          app/api/routes/__init__.py \
+          app/api/routes/health.py \
+          app/core/__init__.py \
+          app/core/security.py \
+          app/core/exceptions.py \
+          app/core/logging.py \
+          app/core/constants.py \
+          app/db/__init__.py \
+          app/db/init_db.py \
+          app/models/__init__.py \
+          app/models/user.py \
+          app/schema/__init__.py \
+          app/schema/user.py \
+          app/repositories/__init__.py \
+          app/repositories/user.py \
+          app/services/__init__.py \
+          app/services/user.py \
+          app/middleware/__init__.py \
+          app/middleware/request_id.py \
+          app/middleware/logging.py \
+          app/utils/__init__.py \
+          app/utils/datetime.py \
+          migrations/env.py \
+          migrations/script.py.mako \
+          docs/architecture.md \
+          tests/__init__.py \
+          tests/conftest.py \
+          tests/api/test_health.py \
+          tests/services/test_user.py \
+          tests/repositories/test_user.py \
+          .github/workflows/ci.yml \
+          .env.example \
+          .dockerignore \
+          Dockerfile \
+          compose.yaml
+
+      - echo "Project structure created successfully."
+
+  # ==========================================
+  # DEVELOPMENT
+  # ==========================================
+
+  dev:
+    desc: Start FastAPI development server
+    cmds:
+      - uv run fastapi dev app/main.py
+
+  start:
+    desc: Start FastAPI production server
+    cmds:
+      - uv run fastapi run app/main.py
+
+  # ==========================================
+  # CODE QUALITY
+  # ==========================================
+
+  format:
+    desc: Format Python code using Ruff
+    cmds:
+      - uv run ruff format .
+
+  lint:
+    desc: Check code quality using Ruff
+    cmds:
+      - uv run ruff check .
+
+  lint-fix:
+    desc: Automatically fix Ruff issues
+    cmds:
+      - uv run ruff check . --fix
+
+  typecheck:
+    desc: Run static type checking
+    cmds:
+      - uv run mypy .
+
+  # ==========================================
+  # TESTING
+  # ==========================================
+
+  test:
+    desc: Run all tests
+    cmds:
+      - uv run pytest
+
+  test-cov:
+    desc: Run tests with coverage
+    cmds:
+      - uv run pytest --cov=app --cov-report=term-missing
+
+  test-api:
+    desc: Run API tests
+    cmds:
+      - uv run pytest tests/api -v
+
+  # ==========================================
+  # DATABASE
+  # ==========================================
+
+  db-revision:
+    desc: Generate Alembic migration
+    cmds:
+      - uv run alembic revision --autogenerate -m "{{.MSG}}"
+    requires:
+      vars: [MSG]
+
+  db-upgrade:
+    desc: Apply database migrations
+    cmds:
+      - uv run alembic upgrade head
+
+  db-downgrade:
+    desc: Roll back one migration
+    cmds:
+      - uv run alembic downgrade -1
+
+  db-check:
+    desc: Fail if models and migrations are out of sync
+    cmds:
+      - uv run alembic check
+
+  db-history:
+    desc: Show migration history
+    cmds:
+      - uv run alembic history
+
+  db-current:
+    desc: Show current database revision
+    cmds:
+      - uv run alembic current
+
+  # ==========================================
+  # DOCKER
+  # ==========================================
+
+  docker-up:
+    desc: Start Docker Compose services
+    cmds:
+      - docker compose up -d --build
+
+  docker-down:
+    desc: Stop Docker Compose services
+    cmds:
+      - docker compose down
+
+  docker-logs:
+    desc: Follow Docker Compose logs
+    cmds:
+      - docker compose logs -f
+
+  # ==========================================
+  # UTILITIES
+  # ==========================================
+
+  tree:
+    desc: Display project structure
+    cmds:
+      - tree -L 4 -I '.venv|__pycache__|.git'
+
+  clean:
+    desc: Remove Python cache files
+    cmds:
+      - find . -type d -name __pycache__ -prune -exec rm -rf {} +
+      - find . -type f -name '*.pyc' -delete
+
+  # ==========================================
+  # COMPLETE QUALITY CHECK
+  # ==========================================
+
+  check:
+    desc: Run all code quality checks and tests
+    cmds:
+      - task: format
+      - task: lint
+      - task: typecheck
+      - task: test
+
+  ci:
+    desc: Run CI checks without modifying source files
+    cmds:
+      - uv run ruff format --check .
+      - uv run ruff check .
+      - uv run mypy .
+      - uv run pytest

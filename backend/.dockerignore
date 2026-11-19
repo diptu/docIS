@@ -1,0 +1,26 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+
+# Virtualenv and caches
+.venv/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Test and coverage output
+.coverage
+.coverage.*
+htmlcov/
+tests/
+
+# Tooling and docs not needed at runtime
+.git/
+.github/
+docs/
+Dockerfile
+compose.yaml
+Taskfile.yml

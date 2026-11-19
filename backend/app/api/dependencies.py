@@ -19,15 +19,23 @@ def get_storage(settings: Annotated[Settings, Depends(get_settings)]) -> LocalSt
     return LocalStorage(settings.storage_dir)
 
 
-def get_document_service(
+def get_document_repository(
     db: Annotated[AsyncSession, Depends(get_db)],
+) -> DocumentRepository:
+    """Provide a DocumentRepository bound to the request's session."""
+    return DocumentRepository(db)
+
+
+def get_document_service(
+    repository: Annotated[DocumentRepository, Depends(get_document_repository)],
     storage: Annotated[LocalStorage, Depends(get_storage)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> DocumentService:
     """Provide a DocumentService wired to the request's session."""
     return DocumentService(
-        repository=DocumentRepository(db),
+        repository=repository,
         storage=storage,
         max_file_size=settings.max_upload_size_bytes,
         max_files=settings.max_files_per_upload,
+        max_attempts=settings.job_max_attempts,
     )

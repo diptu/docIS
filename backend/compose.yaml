@@ -19,12 +19,18 @@ services:
       retries: 10
 
   migrate:
-    build: .
+    build:
+      context: .
+      args:
+        OCR_EXTRA_LANGS: ${OCR_EXTRA_LANGS:-}
     image: docis-backend
     command: ["alembic", "upgrade", "head"]
     environment: &app-env
       APP_NAME: ${APP_NAME:-docIS}
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-docis}:${POSTGRES_PASSWORD:-docis}@db:5432/${POSTGRES_DB:-docis}
+      JOB_MAX_ATTEMPTS: ${JOB_MAX_ATTEMPTS:-3}
+      JOB_RETRY_BASE_SECONDS: ${JOB_RETRY_BASE_SECONDS:-30}
+      JOB_RETRY_MAX_SECONDS: ${JOB_RETRY_MAX_SECONDS:-900}
     depends_on:
       db:
         condition: service_healthy
@@ -40,6 +46,39 @@ services:
       - documents-data:/app/storage
     ports:
       - "${API_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # Runs document processing jobs. Scale with:
+  #   docker compose up -d --scale worker=3
+  worker:
+    image: docis-backend
+    command: ["python", "-m", "app.worker"]
+    restart: unless-stopped
+    environment:
+      <<: *app-env
+      STORAGE_DIR: /app/storage
+      OCR_LANGUAGES: ${OCR_LANGUAGES:-eng}
+      WORKER_HEARTBEAT_FILE: /tmp/worker-heartbeat
+      JOB_LEASE_SECONDS: ${JOB_LEASE_SECONDS:-300}
+    volumes:
+      - documents-data:/app/storage
+    # Let the current job finish on shutdown; an interrupted job is
+    # requeued automatically once its lease expires.
+    stop_grace_period: 2m
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os, sys, time; sys.exit(time.time() - os.path.getmtime('/tmp/worker-heartbeat') > 60)"
+      interval: 15s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
     depends_on:
       db:
         condition: service_healthy

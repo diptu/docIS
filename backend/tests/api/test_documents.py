@@ -10,6 +10,7 @@ from httpx import Response
 from app.core.config import Settings, get_settings
 from app.db.session import get_db
 from app.main import app
+from app.models import ProcessingJob
 from tests.fakes import FakeSession
 from tests.helpers import (
     CSV_BYTES,
@@ -111,7 +112,9 @@ def test_upload_each_supported_type(
     assert session.committed
 
 
-def test_upload_multiple_files_in_one_request(client: TestClient) -> None:
+def test_upload_multiple_files_in_one_request(
+    client: TestClient, session: FakeSession
+) -> None:
     """Several files of different types can be uploaded together."""
     response = client.post(
         "/documents",
@@ -124,6 +127,10 @@ def test_upload_multiple_files_in_one_request(client: TestClient) -> None:
 
     assert response.status_code == 201
     assert [d["file_name"] for d in response.json()] == ["a.pdf", "b.png", "c.csv"]
+    # Every uploaded file gets a queued job, committed with its document.
+    jobs = [obj for obj in session.added if isinstance(obj, ProcessingJob)]
+    assert [str(job.document_id) for job in jobs] == [d["id"] for d in response.json()]
+    assert {job.status for job in jobs} == {"queued"}
 
 
 def test_file_name_is_stripped_of_directories(client: TestClient) -> None:

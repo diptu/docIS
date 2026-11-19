@@ -16,6 +16,18 @@ class AppError(Exception):
         self.message = message
 
 
+class NotFoundError(AppError):
+    """The requested resource does not exist."""
+
+    status_code = status.HTTP_404_NOT_FOUND
+
+
+class ConflictError(AppError):
+    """The request conflicts with the resource's current state."""
+
+    status_code = status.HTTP_409_CONFLICT
+
+
 class UnsupportedFileTypeError(AppError):
     """The uploaded file is not an accepted type."""
 

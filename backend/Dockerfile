@@ -30,6 +30,14 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # ------------------------------------------------------------
 FROM python:3.11.9-slim-bookworm AS runtime
 
+# Tesseract OCR engine. English is always included; add more languages at
+# build time, e.g. --build-arg OCR_EXTRA_LANGS="deu fra".
+ARG OCR_EXTRA_LANGS=""
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tesseract-ocr \
+       $(for lang in $OCR_EXTRA_LANGS; do echo "tesseract-ocr-$lang"; done) \
+    && rm -rf /var/lib/apt/lists/*
+
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1

@@ -3,12 +3,22 @@ Document ORM model.
 """
 
 import uuid
+from enum import StrEnum
 
 from sqlalchemy import BigInteger, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 from app.models.base import TimestampMixin
+
+
+class DocumentStatus(StrEnum):
+    """Lifecycle of a document through ingestion and processing."""
+
+    UPLOADED = "uploaded"
+    PROCESSING = "processing"
+    PROCESSED = "processed"
+    FAILED = "failed"
 
 
 class Document(TimestampMixin, Base):

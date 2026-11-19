@@ -6,15 +6,20 @@ import uuid
 from pathlib import PurePosixPath
 
 from fastapi import UploadFile
+from sqlalchemy.exc import IntegrityError
 
 from app.core.exceptions import (
+    ConflictError,
     CorruptedFileError,
     EmptyFileError,
     FileTooLargeError,
+    NotFoundError,
     TooManyFilesError,
     UnsupportedFileTypeError,
 )
-from app.models.document import Document
+from app.models.document import Document, DocumentStatus
+from app.models.processing_job import JobStatus, ProcessingJob
+from app.processing.extract import PROCESSABLE_TYPES
 from app.repositories.document import DocumentRepository
 from app.services.file_types import (
     SIGNATURE_LENGTH,
@@ -24,7 +29,6 @@ from app.services.file_types import (
 from app.services.validators import ContentMismatchError, CorruptedContentError
 from app.storage.local import LocalStorage, StorageLimitExceededError
 
-STATUS_UPLOADED = "uploaded"
 ORIGINALS_PREFIX = "originals"
 MAX_FILE_NAME_LENGTH = 255
 
@@ -54,17 +58,21 @@ class DocumentService:
         storage: LocalStorage,
         max_file_size: int,
         max_files: int,
+        max_attempts: int = 3,
     ) -> None:
         self.repository = repository
         self.storage = storage
         self.max_file_size = max_file_size
         self.max_files = max_files
+        self.max_attempts = max_attempts
 
     async def upload(self, files: list[UploadFile]) -> list[Document]:
         """Store a batch of files and create their records.
 
-        The batch is all-or-nothing: if any file is rejected, or the database
-        write fails, every file already written by this call is removed.
+        Each document whose type can be processed gets a queued processing
+        job in the same transaction. The batch is all-or-nothing: if any file
+        is rejected, or the database write fails, every file already written
+        by this call is removed.
         """
         if len(files) > self.max_files:
             raise TooManyFilesError(
@@ -78,11 +86,52 @@ class DocumentService:
                 document = await self._store(upload)
                 stored_keys.append(document.storage_path)
                 documents.append(document)
-            return await self.repository.add_all(documents)
+            jobs = [
+                self._new_job(document.id)
+                for document in documents
+                if document.file_type in PROCESSABLE_TYPES
+            ]
+            return await self.repository.add_all(documents, jobs)
         except BaseException:
             for key in stored_keys:
                 await self.storage.delete(key)
             raise
+
+    def _new_job(self, document_id: uuid.UUID) -> ProcessingJob:
+        return ProcessingJob(
+            document_id=document_id,
+            status=JobStatus.QUEUED,
+            max_attempts=self.max_attempts,
+        )
+
+    async def retry_processing(self, document_id: uuid.UUID) -> ProcessingJob:
+        """Queue a fresh processing job for a document whose last job failed.
+
+        A new job (with a full set of attempts) is created rather than
+        resetting the old one, so the failure history is kept.
+        """
+        document = await self.repository.get(document_id)
+        if document is None:
+            raise NotFoundError(f"Document {document_id} not found.")
+        if document.file_type not in PROCESSABLE_TYPES:
+            raise ConflictError(
+                f"Documents of type {document.file_type} are not processed."
+            )
+
+        latest = await self.repository.latest_job(document_id)
+        if latest is not None and latest.status != JobStatus.FAILED:
+            raise ConflictError(
+                f"Document {document_id} cannot be retried: its processing job is "
+                f"{latest.status}. Only failed jobs can be retried."
+            )
+        try:
+            return await self.repository.add_job(self._new_job(document_id))
+        except IntegrityError:
+            # Another request queued a job concurrently (unique active-job
+            # index); the document is being processed either way.
+            raise ConflictError(
+                f"Document {document_id} already has a queued or running job."
+            ) from None
 
     async def _store(self, upload: UploadFile) -> Document:
         name = clean_file_name(upload.filename)
@@ -129,5 +178,5 @@ class DocumentService:
             storage_path=stored.key,
             size_bytes=stored.size_bytes,
             sha256=stored.sha256,
-            status=STATUS_UPLOADED,
+            status=DocumentStatus.UPLOADED,
         )

@@ -69,6 +69,10 @@ class LocalStorage:
             raise ValueError(f"Invalid storage key: {key!r}")
         return path
 
+    def path_for(self, key: str) -> Path:
+        """Return the filesystem path of a stored file, for reading."""
+        return self._resolve(key)
+
     def _make_dirs(self, directory: Path) -> None:
         """Create missing directories under the root, each with DIR_MODE.
 

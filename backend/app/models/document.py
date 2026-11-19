@@ -4,7 +4,7 @@ Document ORM model.
 
 import uuid
 
-from sqlalchemy import String, Uuid
+from sqlalchemy import BigInteger, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -24,4 +24,7 @@ class Document(TimestampMixin, Base):
     file_name: Mapped[str] = mapped_column(String(255), nullable=False)
     file_type: Mapped[str] = mapped_column(String(100), nullable=False)
     storage_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    # Nullable only for rows created before checksums were recorded.
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    sha256: Mapped[str | None] = mapped_column(String(64), index=True)
     status: Mapped[str] = mapped_column(String(50), nullable=False, index=True)

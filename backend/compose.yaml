@@ -33,7 +33,11 @@ services:
   api:
     image: docis-backend
     restart: unless-stopped
-    environment: *app-env
+    environment:
+      <<: *app-env
+      STORAGE_DIR: /app/storage
+    volumes:
+      - documents-data:/app/storage
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
@@ -44,3 +48,4 @@ services:
 
 volumes:
   db-data:
+  documents-data:

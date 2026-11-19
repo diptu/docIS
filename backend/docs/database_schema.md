@@ -9,6 +9,8 @@ erDiagram
         varchar(255) file_name "NOT NULL"
         varchar(100) file_type "NOT NULL, e.g. application/pdf"
         varchar(1024) storage_path "NOT NULL"
+        bigint size_bytes "bytes stored"
+        varchar(64) sha256 "indexed, hex SHA-256 of original"
         varchar(50) status "NOT NULL, indexed"
         timestamptz created_at "NOT NULL, default now()"
         timestamptz updated_at "NOT NULL, default now(), on update now()"
@@ -18,7 +20,8 @@ erDiagram
 ## Migrations
 
 The schema is managed by Alembic (`migrations/`). The initial revision
-`a7c60fb06eaa` creates the `documents` table. Constraint names follow the
+`a7c60fb06eaa` creates the `documents` table; `b57b365d1cf4` adds
+`size_bytes` and `sha256` (nullable only for rows uploaded before it). Constraint names follow the
 naming convention in [`app/db/base.py`](../app/db/base.py).
 
 ```bash
@@ -39,6 +42,8 @@ Source: [`app/models/document.py`](../app/models/document.py)
 | `file_name`    | `VARCHAR(255)`  | `NOT NULL`                  |                                          |
 | `file_type`    | `VARCHAR(100)`  | `NOT NULL`                  | MIME type or extension                   |
 | `storage_path` | `VARCHAR(1024)` | `NOT NULL`                  | Location of the file in storage          |
+| `size_bytes`   | `BIGINT`        | nullable                    | Size of the stored original in bytes     |
+| `sha256`       | `VARCHAR(64)`   | nullable, indexed           | SHA-256 of the original, for integrity   |
 | `status`       | `VARCHAR(50)`   | `NOT NULL`, indexed         | Processing state of the document         |
 | `created_at`   | `TIMESTAMPTZ`   | `NOT NULL`                  | `now()` set by the database on insert    |
 | `updated_at`   | `TIMESTAMPTZ`   | `NOT NULL`                  | `now()` on insert; SQLAlchemy sets `now()` on ORM updates |
@@ -51,3 +56,4 @@ Source: [`app/models/document.py`](../app/models/document.py)
 | ----------------------- | -------- |
 | `pk_documents`          | `id`     |
 | `ix_documents_status`   | `status` |
+| `ix_documents_sha256`   | `sha256` |

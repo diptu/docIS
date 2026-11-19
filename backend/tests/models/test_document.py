@@ -16,6 +16,8 @@ def test_document_table_definition() -> None:
         "file_name",
         "file_type",
         "storage_path",
+        "size_bytes",
+        "sha256",
         "status",
         "created_at",
         "updated_at",

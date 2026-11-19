@@ -36,5 +36,7 @@ class DocumentRead(DocumentBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    size_bytes: int | None = None
+    sha256: str | None = None
     created_at: datetime
     updated_at: datetime

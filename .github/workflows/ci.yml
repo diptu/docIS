@@ -60,7 +60,7 @@ jobs:
         run: uv run pytest
 
   migrations:
-    name: Database migrations
+    name: Database (migrations + PostgreSQL tests)
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -70,21 +70,25 @@ jobs:
 
     services:
       postgres:
-        image: postgres:18-alpine
+        # PostgreSQL 18 with pgvector, which the search migration requires
+        # (CREATE EXTENSION vector); matches backend/db/Dockerfile.
+        image: pgvector/pgvector:pg18
         env:
           POSTGRES_USER: ci
           POSTGRES_PASSWORD: ci
-          POSTGRES_DB: ci
+          POSTGRES_DB: ci_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U ci -d ci"
+          --health-cmd "pg_isready -U ci -d ci_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
 
     env:
-      DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/ci
+      DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/ci_test
+      # The postgres test layer drops and rebuilds this schema.
+      TEST_POSTGRES_URL: postgresql+asyncpg://ci:ci@localhost:5432/ci_test
 
     steps:
       - name: Check out repository
@@ -112,6 +116,9 @@ jobs:
         run: |
           uv run alembic downgrade base
           uv run alembic upgrade head
+
+      - name: PostgreSQL integration tests (constraints, locking, FTS, pgvector)
+        run: uv run pytest -m postgres --no-cov
 
   docker:
     name: Docker build and smoke test

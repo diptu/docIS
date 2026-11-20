@@ -10,7 +10,8 @@ from fastapi import APIRouter, Depends, FastAPI, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.routes import compare, documents, invoices, search
+from app.api.routes import compare, documents, invoices, processing, search
+from app.api.upload_limit import UploadSizeLimitMiddleware
 from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
 from app.db.session import close_db, get_db
@@ -64,4 +65,18 @@ app.include_router(documents.router)
 app.include_router(invoices.router)
 app.include_router(compare.router)
 app.include_router(search.router)
+app.include_router(processing.router)
 register_exception_handlers(app)
+
+
+def _upload_limits() -> tuple[int, float, int]:
+    # Resolved per request through dependency overrides, like the routes.
+    current = app.dependency_overrides.get(get_settings, get_settings)()
+    return (
+        current.max_upload_request_bytes,
+        current.max_upload_size_mb,
+        current.max_files_per_upload,
+    )
+
+
+app.add_middleware(UploadSizeLimitMiddleware, limits=_upload_limits)

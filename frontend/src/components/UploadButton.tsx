@@ -1,12 +1,22 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 
-import { useUpload } from "../api/hooks";
-
-const ACCEPT = ".pdf,.jpg,.jpeg,.png,.tif,.tiff,.xlsx,.xls,.csv";
+import { useUpload, useUploadLimits } from "../api/hooks";
+import { formatLimit, uploadProblem } from "../lib/uploadLimits";
+import { ACCEPT, SupportedFormats } from "./SupportedFormats";
 
 export function UploadButton() {
   const input = useRef<HTMLInputElement>(null);
   const upload = useUpload();
+  const limits = useUploadLimits().data;
+  const [problem, setProblem] = useState<string | null>(null);
+
+  const send = (files: File[]) => {
+    // Without known limits the backend still enforces them.
+    const found = limits ? uploadProblem(files, limits) : null;
+    setProblem(found);
+    if (found) upload.reset();
+    else upload.mutate(files);
+  };
 
   return (
     <div className="flex flex-col items-end gap-1">
@@ -19,7 +29,7 @@ export function UploadButton() {
         aria-label="Choose files to upload"
         onChange={(event) => {
           const files = Array.from(event.target.files ?? []);
-          if (files.length) upload.mutate(files);
+          if (files.length) send(files);
           event.target.value = "";
         }}
       />
@@ -31,12 +41,19 @@ export function UploadButton() {
       >
         {upload.isPending ? "Uploading…" : "Upload documents"}
       </button>
-      {upload.isError && (
-        <p role="alert" className="max-w-md text-right text-sm text-red-700">
-          {upload.error.message}
+      <SupportedFormats />
+      {limits && (
+        <p className="text-xs text-slate-500">
+          Up to {formatLimit(limits.max_file_size_mb)} per file, {limits.max_files_per_upload} files
+          per upload
         </p>
       )}
-      {upload.isSuccess && (
+      {(problem !== null || upload.isError) && (
+        <p role="alert" className="max-w-md text-right text-sm text-red-700">
+          {problem ?? upload.error?.message}
+        </p>
+      )}
+      {upload.isSuccess && !problem && (
         <p className="text-sm text-emerald-700">
           {upload.data.length} file{upload.data.length === 1 ? "" : "s"} uploaded.
         </p>

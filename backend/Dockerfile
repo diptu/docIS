@@ -42,6 +42,7 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     EMBEDDING_CACHE_DIR=/app/models \
+    STORAGE_DIR=/app/storage \
     HF_HUB_DISABLE_TELEMETRY=1
 
 RUN groupadd --system app && useradd --system --gid app --home /app app
@@ -59,11 +60,17 @@ from pathlib import Path; \
 FastEmbedEmbedder(Path('/app/models')).embed_query('warm up')" \
     && chown -R app:app /app/models
 
-USER app
+# The entrypoint starts as root only to make STORAGE_DIR writable (hosted
+# persistent disks, e.g. on Render, are mounted root-owned), then runs every
+# command as the unprivileged "app" user.
+ENTRYPOINT ["/app/scripts/docker-entrypoint.sh"]
 
+# Listens on $PORT when the platform sets it (Render does), else 8000.
 EXPOSE 8000
 
-HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
-    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
+    CMD ["python", "-c", "import os, urllib.request; urllib.request.urlopen(f\"http://127.0.0.1:{os.environ.get('PORT', '8000')}/health\", timeout=3)"]
 
-CMD ["fastapi", "run", "app/main.py", "--host", "0.0.0.0", "--port", "8000"]
+# API only (Docker Compose runs the worker and beat as separate services).
+# On Render, scripts/render-start.sh runs the API, worker and beat together.
+CMD ["sh", "-c", "exec fastapi run app/main.py --host 0.0.0.0 --port ${PORT:-8000}"]

@@ -46,6 +46,7 @@ from app.schema.document import (
     ProcessingJobRead,
     ProcessingSummary,
     ReviewRead,
+    UploadLimitsRead,
     ValidationCheckRead,
     ValidationErrorRead,
     ValidationErrorUpdate,
@@ -131,6 +132,19 @@ async def delete_document(
     await service.delete_one(document_id)
 
 
+@router.get("/upload-limits", summary="Upload size and file count limits")
+async def upload_limits(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> UploadLimitsRead:
+    """The per-file size limit and the maximum number of files per upload
+    request (`MAX_UPLOAD_SIZE_MB`, `MAX_FILES_PER_UPLOAD`)."""
+    return UploadLimitsRead(
+        max_file_size_bytes=settings.max_upload_size_bytes,
+        max_file_size_mb=settings.max_upload_size_mb,
+        max_files_per_upload=settings.max_files_per_upload,
+    )
+
+
 @router.get("/stats", summary="Document counts and processing time")
 async def document_stats(
     repository: Annotated[DocumentRepository, Depends(get_document_repository)],
@@ -177,11 +191,7 @@ async def list_documents(
         items.append(
             DocumentListItem(
                 **DocumentRead.model_validate(document).model_dump(),
-                processing=(
-                    ProcessingSummary(kind=job.kind, status=job.status, stage=job.stage)
-                    if job is not None
-                    else None
-                ),
+                processing=ProcessingSummary.of(job) if job is not None else None,
                 invoice=(
                     InvoiceSummary(
                         is_invoice=invoice.is_invoice,
@@ -324,6 +334,25 @@ async def get_document_processing(
     if job is None:
         raise NotFoundError(f"Document {document_id} has no processing job.")
     return ProcessingJobRead.model_validate(job)
+
+
+@router.get(
+    "/{document_id}/processing/history",
+    summary="List all processing jobs of a document",
+    responses=_NOT_FOUND,
+)
+async def get_document_processing_history(
+    document_id: uuid.UUID,
+    repository: Annotated[DocumentRepository, Depends(get_document_repository)],
+) -> list[ProcessingJobRead]:
+    """Every processing job of the document, newest first: content
+    extraction, invoice extraction and earlier failed runs that were
+    retried. Empty for a document that is not processed."""
+    await _get_document_or_404(repository, document_id)
+    return [
+        ProcessingJobRead.model_validate(job)
+        for job in await repository.list_jobs(document_id)
+    ]
 
 
 @router.post(

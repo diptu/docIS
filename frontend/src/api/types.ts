@@ -19,6 +19,14 @@ export interface ProcessingSummary {
   kind: string;
   status: JobStatus;
   stage: string | null;
+  /** Completion of the current stage, 0-100; null if unknown. */
+  percent: number | null;
+  attempts: number;
+  max_attempts: number;
+  /** A failed attempt is waiting to be retried automatically. */
+  retry_scheduled: boolean;
+  /** Last failure, also while a retry is scheduled. */
+  error: string | null;
 }
 
 export interface InvoiceSummary {
@@ -45,6 +53,13 @@ export interface DocumentStats {
   in_progress: number;
   /** Mean worker time per completed document; null until one completes. */
   avg_processing_seconds: number | null;
+}
+
+/** Limits on POST /documents, from the backend's environment. */
+export interface UploadLimits {
+  max_file_size_bytes: number;
+  max_file_size_mb: number;
+  max_files_per_upload: number;
 }
 
 /** Outcome of a delete request, per document ID. */
@@ -78,6 +93,23 @@ export interface ProcessingJob {
   finished_at: string | null;
   retry_scheduled: boolean;
   percent: number | null;
+}
+
+/** A job in the processing monitor (GET /processing/jobs). */
+export interface ProcessingJobListItem extends ProcessingJob {
+  document_id: string;
+  file_name: string;
+  /** The document's most recent job; only it can be retried. */
+  is_latest: boolean;
+}
+
+export interface ProcessingJobList {
+  items: ProcessingJobListItem[];
+  total: number;
+  offset: number;
+  limit: number;
+  /** Jobs per status, ignoring the status filter. */
+  counts: Partial<Record<JobStatus, number>>;
 }
 
 export interface Party {

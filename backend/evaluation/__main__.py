@@ -91,8 +91,12 @@ def main(argv: list[str] | None = None) -> int:
     if len(errors) == len(cases):
         print(f"No case could be scored. Details: {out / 'report.md'}")
         return 3
+    reliability = summary["reliability"]
     print(
-        f"\nDocuments fully correct: {summary['documents_exact']}% · "
+        f"\nSuccess rate: {reliability['success_rate']}% · "
+        f"failure rate: {reliability['failure_rate']}% · "
+        f"median time: {summary['timing_seconds']['total']['median']} s\n"
+        f"Documents fully correct: {summary['documents_exact']}% · "
         f"field accuracy: {summary['fields']['accuracy']}% · "
         f"hallucination rate: {summary['fields']['hallucination_rate']}%\n"
         f"Report: {out / 'report.md'}"

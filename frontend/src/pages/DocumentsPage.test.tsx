@@ -3,7 +3,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 
-import { listItem } from "../test/fixtures";
+import { listItem, summary } from "../test/fixtures";
 import { DocumentsPage } from "./DocumentsPage";
 
 function renderPage() {
@@ -20,10 +20,18 @@ function renderPage() {
 const STATS = { total: 4, completed: 2, failed: 1, in_progress: 1, avg_processing_seconds: 125 };
 const isStats = (url: unknown) => String(url).endsWith("/documents/stats");
 const statsResponse = () => new Response(JSON.stringify(STATS), { status: 200 });
+const LIMITS = { max_file_size_bytes: 20 * 1024 * 1024, max_file_size_mb: 20, max_files_per_upload: 20 };
+/** Stats and upload limits, which every render of the page also fetches. */
+const sideResponse = (url: unknown) =>
+  isStats(url)
+    ? statsResponse()
+    : String(url).endsWith("/documents/upload-limits")
+      ? new Response(JSON.stringify(LIMITS), { status: 200 })
+      : null;
 
 function mockList(items: ReturnType<typeof listItem>[]) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (url) =>
-    isStats(url) ? statsResponse() : new Response(JSON.stringify({ items, total: items.length, offset: 0, limit: 25 }), {
+    sideResponse(url) ?? new Response(JSON.stringify({ items, total: items.length, offset: 0, limit: 25 }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     }),
@@ -40,7 +48,7 @@ it("lists documents with their invoice and review state", async () => {
       file_name: "scan.png",
       file_type: "image/png",
       status: "processing",
-      processing: { kind: "extract_content", status: "running", stage: "ocr" },
+      processing: summary({ kind: "extract_content", status: "running", stage: "ocr", percent: null }),
       invoice: null,
     }),
     listItem({
@@ -58,7 +66,7 @@ it("lists documents with their invoice and review state", async () => {
   expect(within(first!).getByText("INV-2026-001")).toBeInTheDocument();
   expect(within(first!).getByText("OK")).toBeInTheDocument();
   expect(within(first!).getByText(/1,487\.50/)).toBeInTheDocument();
-  expect(within(second!).getByText("Ocr…")).toBeInTheDocument();
+  expect(within(second!).getByText("OCR…")).toBeInTheDocument();
   expect(within(third!).getByText("2 open")).toBeInTheDocument();
 });
 
@@ -111,7 +119,8 @@ describe("deleting documents", () => {
   function mockApi(result: object) {
     let items = [listItem(), second()];
     return vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
-      if (isStats(url)) return statsResponse();
+      const side = sideResponse(url);
+      if (side) return side;
       if (init?.method === "POST") {
         const { ids } = JSON.parse(String(init.body)) as { ids: string[] };
         const kept = (result as { in_progress: string[] }).in_progress;

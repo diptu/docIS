@@ -1,309 +1,404 @@
-import hashlib
-import stat
+"""Document read routes: listing, detail, pages, sheets, processing state,
+validation errors and the original file, against a mocked repository."""
+
 import uuid
-from collections.abc import AsyncIterator, Iterator, Sequence
 from pathlib import Path
+from typing import Any
 
 import pytest
-from fastapi.testclient import TestClient
-from httpx import Response
+from httpx import AsyncClient
 
-from app.api.dependencies import get_job_dispatcher
-from app.core.config import Settings, get_settings
-from app.db.session import get_db
-from app.main import app
-from app.models import ProcessingJob
-from tests.fakes import FakeSession
-from tests.helpers import (
-    CSV_BYTES,
-    JPEG_BYTES,
-    PDF_BYTES,
-    PNG_BYTES,
-    TIFF_BYTES,
-    XLS_BYTES,
-    XLSX_BYTES,
-    make_image,
-    make_pdf,
-    make_zip,
-    truncate,
+from app.core.config import Settings
+from app.models import DocumentStatus, JobStatus
+from tests.support.builders import (
+    build_document,
+    build_invoice,
+    build_job,
+    build_page,
+    build_sheet,
+    build_validation_error,
 )
 
-XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+MISSING = "00000000-0000-0000-0000-00000000dead"
 
 
-@pytest.fixture
-def session() -> FakeSession:
-    return FakeSession()
+# --------------------------------------------------------------- listing
 
 
-@pytest.fixture
-def storage_dir(tmp_path: Path) -> Path:
-    return tmp_path / "storage"
-
-
-@pytest.fixture
-def dispatched() -> list[uuid.UUID]:
-    return []
-
-
-@pytest.fixture
-def client(
-    session: FakeSession, storage_dir: Path, dispatched: list[uuid.UUID]
-) -> Iterator[TestClient]:
-    async def record(job_ids: Sequence[uuid.UUID]) -> None:
-        dispatched.extend(job_ids)
-
-    async def override_get_db() -> AsyncIterator[FakeSession]:
-        yield session
-
-    settings = Settings(
-        database_url="postgresql+asyncpg://test@localhost/test",
-        storage_dir=storage_dir,
-        max_upload_size_bytes=64 * 1024,
-        max_files_per_upload=3,
-    )
-    app.dependency_overrides[get_db] = override_get_db
-    app.dependency_overrides[get_settings] = lambda: settings
-    app.dependency_overrides[get_job_dispatcher] = lambda: record
-    try:
-        yield TestClient(app)
-    finally:
-        app.dependency_overrides.clear()
-
-
-def stored_files(storage_dir: Path) -> list[Path]:
-    if not storage_dir.exists():
-        return []
-    return sorted(p for p in storage_dir.rglob("*") if p.is_file())
-
-
-def post(client: TestClient, *files: tuple[str, bytes]) -> Response:
-    return client.post("/documents", files=[("files", f) for f in files])
-
-
-# ------------------------------------------------------------ accepted
-
-
-@pytest.mark.parametrize(
-    ("name", "content", "media_type", "stored_ext"),
-    [
-        ("report.pdf", PDF_BYTES, "application/pdf", ".pdf"),
-        ("photo.jpg", JPEG_BYTES, "image/jpeg", ".jpg"),
-        ("photo.JPEG", JPEG_BYTES, "image/jpeg", ".jpg"),
-        ("scan.png", PNG_BYTES, "image/png", ".png"),
-        ("scan.tif", TIFF_BYTES, "image/tiff", ".tiff"),
-        ("book.xlsx", XLSX_BYTES, XLSX_TYPE, ".xlsx"),
-        ("legacy.XLS", XLS_BYTES, "application/vnd.ms-excel", ".xls"),
-        ("data.csv", CSV_BYTES, "text/csv", ".csv"),
-    ],
-)
-def test_upload_each_supported_type(
-    client: TestClient,
-    session: FakeSession,
-    storage_dir: Path,
-    name: str,
-    content: bytes,
-    media_type: str,
-    stored_ext: str,
+async def test_list_combines_documents_with_their_summaries(
+    client: AsyncClient, repository: Any
 ) -> None:
-    """Every supported type is accepted, stored unmodified and recorded."""
-    response = client.post("/documents", files=[("files", (name, content))])
+    """Each item carries its latest job, invoice summary and open errors."""
+    done, fresh = build_document(file_name="a.pdf"), build_document(file_name="b.csv")
+    invoice = build_invoice(done.id, corrected_at=done.created_at)
+    repository.list_documents.return_value = ([done, fresh], 7)
+    repository.summaries.return_value = {
+        done.id: (build_job(done.id), invoice, 2),
+        fresh.id: (None, None, 0),
+    }
 
-    assert response.status_code == 201, response.text
-    document = response.json()[0]
-    assert document["file_name"] == name
-    assert document["file_type"] == media_type
-    assert document["status"] == "uploaded"
-    assert document["size_bytes"] == len(content)
-    assert document["sha256"] == hashlib.sha256(content).hexdigest()
+    response = await client.get("/documents", params={"offset": 5, "limit": 2})
 
-    hex_id = document["id"].replace("-", "")
-    assert document["storage_path"] == (
-        f"originals/{hex_id[:2]}/{document['id']}{stored_ext}"
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["total"], body["offset"], body["limit"]) == (7, 5, 2)
+    first, second = body["items"]
+    assert first["file_name"] == "a.pdf"
+    assert first["processing"] == {
+        "kind": "extract_content",
+        "status": "succeeded",
+        "stage": "saving",
+        "percent": 100.0,
+        "attempts": 1,
+        "max_attempts": 3,
+        "retry_scheduled": False,
+        "error": None,
+    }
+    assert first["invoice"]["invoice_number"] == "INV-2026-001"
+    assert first["invoice"]["total_amount"] == "1487.50"
+    assert first["invoice"]["corrected"] is True
+    assert first["unresolved_errors"] == 2
+    assert (second["processing"], second["invoice"], second["unresolved_errors"]) == (
+        None,
+        None,
+        0,
     )
-    assert (storage_dir / document["storage_path"]).read_bytes() == content
-    assert session.committed
+    repository.summaries.assert_awaited_once_with([done.id, fresh.id])
 
 
-def test_upload_multiple_files_in_one_request(
-    client: TestClient, session: FakeSession, dispatched: list[uuid.UUID]
+async def test_list_passes_filters_to_the_repository(
+    client: AsyncClient, repository: Any
 ) -> None:
-    """Several files of different types can be uploaded together."""
-    response = client.post(
+    """Query filters reach the repository typed (enum status, bool review)."""
+    repository.list_documents.return_value = ([], 0)
+    repository.summaries.return_value = {}
+
+    response = await client.get(
         "/documents",
-        files=[
-            ("files", ("a.pdf", PDF_BYTES)),
-            ("files", ("b.png", PNG_BYTES)),
-            ("files", ("c.csv", CSV_BYTES)),
-        ],
+        params={
+            "status": "failed",
+            "file_type": "text/csv",
+            "needs_review": "false",
+        },
     )
 
-    assert response.status_code == 201
-    assert [d["file_name"] for d in response.json()] == ["a.pdf", "b.png", "c.csv"]
-    # Every uploaded file gets a queued job, committed with its document.
-    jobs = [obj for obj in session.added if isinstance(obj, ProcessingJob)]
-    assert [str(job.document_id) for job in jobs] == [d["id"] for d in response.json()]
-    assert {job.status for job in jobs} == {"queued"}
-    # ...and is sent to the workers only after the commit.
-    assert dispatched == [job.id for job in jobs]
-    assert session.committed
-
-
-def test_file_name_is_stripped_of_directories(client: TestClient) -> None:
-    """Client-supplied paths cannot influence where files are written."""
-    response = client.post(
-        "/documents", files=[("files", ("../../etc/evil.pdf", PDF_BYTES))]
+    assert response.status_code == 200
+    assert response.json() == {"items": [], "total": 0, "offset": 0, "limit": 50}
+    repository.list_documents.assert_awaited_once_with(
+        0, 50, DocumentStatus.FAILED, "text/csv", False
     )
-
-    assert response.status_code == 201
-    assert response.json()[0]["file_name"] == "evil.pdf"
-    assert response.json()[0]["storage_path"].startswith("originals/")
-
-
-# ------------------------------------------------------------ T1.5 storage
-
-
-def test_stored_originals_are_read_only_and_complete(
-    client: TestClient, storage_dir: Path
-) -> None:
-    """Stored files are read-only, private, and no partial files remain."""
-    response = client.post("/documents", files=[("files", ("a.pdf", PDF_BYTES))])
-    stored = storage_dir / response.json()[0]["storage_path"]
-
-    assert stat.S_IMODE(stored.stat().st_mode) == 0o440
-    assert stat.S_IMODE(stored.parent.stat().st_mode) & 0o007 == 0
-    assert not list(storage_dir.rglob("*.part"))
-
-
-# ------------------------------------------------------------ rejected
 
 
 @pytest.mark.parametrize(
-    ("name", "content", "message"),
+    "params",
     [
-        ("notes.txt", b"hello", "unsupported file type"),
-        ("anim.gif", b"GIF89a....", "unsupported file type"),
-        ("noextension", PNG_BYTES, "unsupported file type"),
-        # Extension does not match the real content.
-        ("photo.png", JPEG_BYTES, "not a valid PNG file"),
-        ("photo.jpg", PNG_BYTES, "not a valid JPEG file"),
-        ("scan.tiff", PDF_BYTES, "not a valid TIFF file"),
-        ("doc.pdf", PNG_BYTES, "not a valid PDF file"),
-        ("plain.xlsx", make_zip({"readme.txt": "x"}), "not a valid XLSX file"),
-        ("book.xls", XLSX_BYTES, "not a valid XLS file"),
-        ("image.csv", PNG_BYTES, "not a valid CSV file"),
+        {"limit": 0},
+        {"limit": 201},
+        {"offset": -1},
+        {"status": "deleted"},
+        {"needs_review": "maybe"},
     ],
 )
-def test_unsupported_types_are_rejected_with_415(
-    client: TestClient, storage_dir: Path, name: str, content: bytes, message: str
+async def test_list_rejects_invalid_query_parameters(
+    client: AsyncClient, repository: Any, params: dict[str, object]
 ) -> None:
-    response = post(client, (name, content))
-
-    assert response.status_code == 415
-    detail = response.json()["detail"]
-    assert name in detail
-    assert message in detail
-    assert stored_files(storage_dir) == []
-
-
-@pytest.mark.parametrize(
-    ("name", "content", "message"),
-    [
-        ("cut.pdf", truncate(make_pdf(pages=3)), "PDF file is damaged"),
-        ("locked.pdf", make_pdf(password="secret"), "password-protected"),
-        ("cut.jpg", truncate(make_image("JPEG", (64, 64))), "JPEG file is damaged"),
-        ("cut.png", truncate(make_image("PNG", (64, 64))), "PNG file is damaged"),
-        ("cut.tiff", truncate(make_image("TIFF", (64, 64))), "TIFF file is damaged"),
-        ("cut.xlsx", truncate(XLSX_BYTES), "XLSX file is damaged"),
-        ("cut.xls", truncate(XLS_BYTES), "XLS file is damaged"),
-        ("bad.csv", b'a,b\n1,"unterminated\n', "CSV file is malformed"),
-        ("blank.csv", b"  \n\n", "CSV file contains no data"),
-    ],
-)
-def test_corrupted_files_are_rejected_with_422(
-    client: TestClient, storage_dir: Path, name: str, content: bytes, message: str
-) -> None:
-    response = post(client, (name, content))
+    """Out-of-range paging and unknown filter values are 422, unqueried."""
+    response = await client.get("/documents", params=params)
 
     assert response.status_code == 422
-    detail = response.json()["detail"]
-    assert name in detail
-    assert message in detail
-    assert stored_files(storage_dir) == []
+    repository.list_documents.assert_not_awaited()
+
+
+# ---------------------------------------------------------------- detail
+
+
+async def test_get_document(client: AsyncClient, repository: Any) -> None:
+    document = build_document()
+    repository.get.return_value = document
+
+    response = await client.get(f"/documents/{document.id}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == str(document.id)
+    assert (body["status"], body["size_bytes"], body["sha256"]) == (
+        "processed",
+        1234,
+        "ab" * 32,
+    )
 
 
 @pytest.mark.parametrize(
-    ("content", "status_code", "message"),
-    [
-        (b"", 422, "file is empty"),
-        (PDF_BYTES + b"\n" * (70 * 1024), 413, "exceeds the"),
-    ],
+    "suffix",
+    ["", "/pages", "/sheets", "/sheets/1", "/processing", "/validation-errors"],
 )
-def test_empty_and_oversized_files(
-    client: TestClient,
-    storage_dir: Path,
-    content: bytes,
-    status_code: int,
-    message: str,
+async def test_unknown_document_is_404_on_every_read(
+    client: AsyncClient, repository: Any, suffix: str
 ) -> None:
-    response = post(client, ("file.pdf", content))
+    """Every per-document read checks the document exists first."""
+    repository.get.return_value = None
 
-    assert response.status_code == status_code
-    assert message in response.json()["detail"]
-    assert stored_files(storage_dir) == []
+    response = await client.get(f"/documents/{MISSING}{suffix}")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": f"Document {MISSING} not found."}
 
 
-def test_one_bad_file_rejects_whole_batch(
-    client: TestClient, session: FakeSession, storage_dir: Path
+@pytest.mark.parametrize("bad_id", ["123", "not-a-uuid", "0" * 40])
+async def test_malformed_document_ids_are_422(
+    client: AsyncClient, repository: Any, bad_id: str
 ) -> None:
-    """A corrupted file undoes earlier, valid files in the same batch."""
-    response = client.post(
-        "/documents",
-        files=[
-            ("files", ("ok.pdf", PDF_BYTES)),
-            ("files", ("ok.csv", CSV_BYTES)),
-            ("files", ("cut.png", truncate(make_image("PNG", (64, 64))))),
-        ],
+    """IDs are validated as UUIDs before anything is looked up."""
+    response = await client.get(f"/documents/{bad_id}")
+
+    assert response.status_code == 422
+    repository.get.assert_not_awaited()
+
+
+# --------------------------------------------------------- pages & sheets
+
+
+async def test_pages_in_order(client: AsyncClient, repository: Any) -> None:
+    document = build_document()
+    repository.get.return_value = document
+    repository.list_pages.return_value = [
+        build_page(document.id, 1, "First"),
+        build_page(document.id, 2, "Second"),
+    ]
+
+    response = await client.get(f"/documents/{document.id}/pages")
+
+    assert [p["text"] for p in response.json()] == ["First", "Second"]
+    assert response.json()[0] == {
+        "page_number": 1,
+        "text": "First",
+        "char_count": 5,
+        "extraction_method": "text_layer",
+        "needs_ocr": False,
+        "ocr_confidence": None,
+    }
+
+
+async def test_sheet_rows_are_windowed_by_offset_and_limit(
+    client: AsyncClient, repository: Any
+) -> None:
+    """offset/limit select a slice of rows; row_count stays the total."""
+    document = build_document(file_type="text/csv")
+    repository.get.return_value = document
+    repository.get_sheet.return_value = build_sheet(
+        document.id, [[f"r{i}", i] for i in range(10)]
+    )
+
+    response = await client.get(
+        f"/documents/{document.id}/sheets/1", params={"offset": 8, "limit": 5}
+    )
+
+    body = response.json()
+    assert (body["row_count"], body["offset"]) == (10, 8)
+    assert body["rows"] == [["r8", 8], ["r9", 9]]
+    repository.get_sheet.assert_awaited_once_with(document.id, 1)
+
+
+async def test_sheet_list_hides_cell_data(client: AsyncClient, repository: Any) -> None:
+    document = build_document(file_type="text/csv")
+    repository.get.return_value = document
+    repository.list_sheets.return_value = [build_sheet(document.id, [["a"]])]
+
+    [sheet] = (await client.get(f"/documents/{document.id}/sheets")).json()
+
+    assert "rows" not in sheet
+    assert sheet["name"] == "Sheet1"
+
+
+async def test_missing_sheet_is_404(client: AsyncClient, repository: Any) -> None:
+    document = build_document()
+    repository.get.return_value = document
+    repository.get_sheet.return_value = None
+
+    response = await client.get(f"/documents/{document.id}/sheets/9")
+
+    assert response.status_code == 404
+    assert "Sheet 9" in response.json()["detail"]
+
+
+@pytest.mark.parametrize("params", [{"limit": 0}, {"limit": 10_001}, {"offset": -1}])
+async def test_sheet_paging_is_validated(
+    client: AsyncClient, repository: Any, params: dict[str, int]
+) -> None:
+    response = await client.get(f"/documents/{MISSING}/sheets/1", params=params)
+
+    assert response.status_code == 422
+
+
+# ------------------------------------------------------------- processing
+
+
+async def test_processing_reports_progress_and_retry_state(
+    client: AsyncClient, repository: Any
+) -> None:
+    """percent and retry_scheduled are derived from the job's fields."""
+    document = build_document(status=DocumentStatus.UPLOADED)
+    repository.get.return_value = document
+    repository.latest_job.return_value = build_job(
+        document.id,
+        status=JobStatus.QUEUED,
+        stage="ocr",
+        progress_current=1,
+        progress_total=4,
+        attempts=1,
+        error="TimeoutError: OCR timed out",
+    )
+
+    body = (await client.get(f"/documents/{document.id}/processing")).json()
+
+    assert (body["status"], body["stage"], body["percent"]) == ("queued", "ocr", 25.0)
+    assert body["retry_scheduled"] is True
+    assert body["error"] == "TimeoutError: OCR timed out"
+
+
+async def test_processing_without_a_job_is_404(
+    client: AsyncClient, repository: Any
+) -> None:
+    document = build_document()
+    repository.get.return_value = document
+    repository.latest_job.return_value = None
+
+    response = await client.get(f"/documents/{document.id}/processing")
+
+    assert response.status_code == 404
+    assert "no processing job" in response.json()["detail"]
+
+
+async def test_retry_returns_the_new_job(client: AsyncClient, service: Any) -> None:
+    document_id = uuid.uuid4()
+    service.retry_processing.return_value = build_job(
+        document_id, status=JobStatus.QUEUED, attempts=0
+    )
+
+    response = await client.post(f"/documents/{document_id}/processing/retry")
+
+    assert response.status_code == 202
+    assert (response.json()["status"], response.json()["retry_scheduled"]) == (
+        "queued",
+        False,
+    )
+    service.retry_processing.assert_awaited_once_with(document_id)
+
+
+# ------------------------------------------------------ validation errors
+
+
+async def test_resolve_a_validation_error(client: AsyncClient, repository: Any) -> None:
+    """PATCH stores the requested state and returns the updated error."""
+    document = build_document()
+    error = build_validation_error(document.id)
+    resolved = build_validation_error(document.id, id=error.id, resolved=True)
+    repository.get.return_value = document
+    repository.get_validation_error.return_value = error
+    repository.set_resolved.return_value = resolved
+
+    response = await client.patch(
+        f"/documents/{document.id}/validation-errors/{error.id}",
+        json={"resolved": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["resolved"] is True
+    repository.set_resolved.assert_awaited_once_with(error, True)
+
+
+async def test_resolving_an_unknown_error_is_404(
+    client: AsyncClient, repository: Any
+) -> None:
+    repository.get.return_value = build_document()
+    repository.get_validation_error.return_value = None
+
+    response = await client.patch(
+        f"/documents/{MISSING}/validation-errors/{uuid.uuid4()}",
+        json={"resolved": True},
+    )
+
+    assert response.status_code == 404
+    repository.set_resolved.assert_not_awaited()
+
+
+@pytest.mark.parametrize("body", [{}, {"resolved": None}, {"resolved": [1]}])
+async def test_resolve_requires_a_boolean(
+    client: AsyncClient, repository: Any, body: dict[str, object]
+) -> None:
+    response = await client.patch(
+        f"/documents/{MISSING}/validation-errors/{uuid.uuid4()}", json=body
     )
 
     assert response.status_code == 422
-    assert not session.committed
-    assert stored_files(storage_dir) == []
+    repository.get.assert_not_awaited()
 
 
-def test_too_many_files(client: TestClient) -> None:
-    files = [("files", (f"{i}.pdf", PDF_BYTES)) for i in range(4)]
-
-    response = client.post("/documents", files=files)
+async def test_correction_body_is_validated_before_any_lookup(
+    client: AsyncClient, repository: Any
+) -> None:
+    """PUT /invoice rejects an incomplete invoice without reading data."""
+    response = await client.put(
+        f"/documents/{MISSING}/invoice", json={"invoice_number": "X"}
+    )
 
     assert response.status_code == 422
-    assert "maximum is 3" in response.json()["detail"]
+    repository.get.assert_not_awaited()
 
 
-def test_no_files(client: TestClient) -> None:
-    assert client.post("/documents").status_code == 422
+# ----------------------------------------------------------- original file
 
 
-def test_database_failure_removes_stored_files(
-    client: TestClient, storage_dir: Path
+@pytest.fixture
+def stored(settings: Settings) -> Any:
+    """Write a document's original into the configured storage."""
+
+    def write(file_type: str, file_name: str, content: bytes) -> Any:
+        document = build_document(file_type=file_type, file_name=file_name)
+        path: Path = settings.storage_dir / document.storage_path
+        path.parent.mkdir(parents=True)
+        path.write_bytes(content)
+        return document
+
+    return write
+
+
+async def test_file_is_served_inline_and_sandboxed(
+    client: AsyncClient, repository: Any, stored: Any
 ) -> None:
-    """If the database write fails, uploaded files are cleaned up."""
-    failing = FakeSession(fail_on_commit=True)
+    """Non-PDF originals are sandboxed and never MIME-sniffed."""
+    repository.get.return_value = stored("text/csv", "data.csv", b"a,b\n1,2\n")
 
-    async def override_get_db() -> AsyncIterator[FakeSession]:
-        yield failing
+    response = await client.get(f"/documents/{repository.get.return_value.id}/file")
 
-    app.dependency_overrides[get_db] = override_get_db
-    with pytest.raises(RuntimeError, match="database unavailable"):
-        client.post("/documents", files=[("files", ("a.pdf", PDF_BYTES))])
+    assert response.status_code == 200
+    assert response.content == b"a,b\n1,2\n"
+    assert response.headers["content-type"].startswith("text/csv")
+    assert response.headers["content-disposition"].startswith("inline")
+    assert response.headers["content-security-policy"] == "sandbox"
+    assert response.headers["x-content-type-options"] == "nosniff"
 
-    assert stored_files(storage_dir) == []
 
-
-def test_rejected_upload_dispatches_nothing(
-    client: TestClient, dispatched: list[uuid.UUID]
+async def test_pdf_download_is_an_attachment_without_sandbox(
+    client: AsyncClient, repository: Any, stored: Any
 ) -> None:
-    response = client.post("/documents", files=[("files", ("notes.txt", b"hello"))])
+    """PDF viewers refuse sandboxed documents, so PDFs are not sandboxed."""
+    repository.get.return_value = stored("application/pdf", "inv.pdf", b"%PDF-1.7")
 
-    assert response.status_code == 415
-    assert dispatched == []
+    response = await client.get(
+        f"/documents/{repository.get.return_value.id}/file",
+        params={"download": "true"},
+    )
+
+    assert response.headers["content-disposition"].startswith("attachment")
+    assert 'filename="inv.pdf"' in response.headers["content-disposition"]
+    assert "content-security-policy" not in response.headers
+
+
+async def test_missing_stored_file_is_404(client: AsyncClient, repository: Any) -> None:
+    repository.get.return_value = build_document()
+
+    response = await client.get(f"/documents/{repository.get.return_value.id}/file")
+
+    assert response.status_code == 404
+    assert "stored file" in response.json()["detail"]

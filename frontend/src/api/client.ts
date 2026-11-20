@@ -9,10 +9,12 @@ import type {
   InvoiceData,
   InvoiceRead,
   ProcessingJob,
+  ProcessingJobList,
   SearchMode,
   SearchResults,
   SheetRows,
   SheetSummary,
+  UploadLimits,
   ValidationErrorItem,
 } from "./types";
 
@@ -65,18 +67,34 @@ export interface ListParams {
   needs_review?: boolean;
 }
 
+export interface JobListParams {
+  offset?: number;
+  limit?: number;
+  status?: string;
+  kind?: string;
+  /** Only each document's most recent job (hide runs that were retried). */
+  latest_only?: boolean;
+}
+
+function queryString(params: object): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== "") query.set(key, String(value));
+  }
+  return query.size ? `?${query}` : "";
+}
+
 export const api = {
-  listDocuments(params: ListParams = {}): Promise<DocumentList> {
-    const query = new URLSearchParams();
-    for (const [key, value] of Object.entries(params)) {
-      if (value !== undefined && value !== "") query.set(key, String(value));
-    }
-    const suffix = query.size ? `?${query}` : "";
-    return request(`/documents${suffix}`);
-  },
+  listDocuments: (params: ListParams = {}): Promise<DocumentList> =>
+    request(`/documents${queryString(params)}`),
+  listJobs: (params: JobListParams = {}): Promise<ProcessingJobList> =>
+    request(`/processing/jobs${queryString(params)}`),
+  getProcessingHistory: (id: string): Promise<ProcessingJob[]> =>
+    request(`/documents/${id}/processing/history`),
   search: (q: string, mode: SearchMode, limit = 20): Promise<SearchResults> =>
     request(`/search?${new URLSearchParams({ q, mode, limit: String(limit) })}`),
   getStats: (): Promise<DocumentStats> => request("/documents/stats"),
+  getUploadLimits: (): Promise<UploadLimits> => request("/documents/upload-limits"),
   uploadDocuments(files: File[]): Promise<DocumentListItem[]> {
     const form = new FormData();
     for (const file of files) form.append("files", file);

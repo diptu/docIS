@@ -145,10 +145,32 @@ tasks:
     cmds:
       - uv run pytest --cov=app --cov-report=term-missing
 
-  test-api:
-    desc: Run API tests
+  test-unit:
+    desc: Run unit tests (pure logic, no I/O)
     cmds:
-      - uv run pytest tests/api -v
+      - uv run pytest -m unit --no-cov {{.CLI_ARGS}}
+
+  test-api:
+    desc: Run API tests (HTTP layer, database mocked)
+    cmds:
+      - uv run pytest -m api --no-cov {{.CLI_ARGS}}
+
+  test-integration:
+    desc: Run integration tests (SQLite, filesystem, OCR, worker; PostgreSQL if TEST_POSTGRES_URL is set)
+    cmds:
+      - uv run pytest -m integration --no-cov {{.CLI_ARGS}}
+
+  test-e2e:
+    desc: Run end-to-end workflow tests (whole app, real database, in-process worker)
+    cmds:
+      - uv run pytest -m e2e --no-cov {{.CLI_ARGS}}
+
+  test-postgres:
+    desc: Run PostgreSQL + pgvector tests against a *_test database (default docis_test in Docker)
+    env:
+      TEST_POSTGRES_URL: '{{.TEST_POSTGRES_URL | default "postgresql+asyncpg://docis:docis@localhost:5434/docis_test"}}'
+    cmds:
+      - uv run pytest -m postgres --no-cov {{.CLI_ARGS}}
 
   # ==========================================
   # EXTRACTION ACCURACY (T4.2)

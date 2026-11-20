@@ -14,11 +14,13 @@ import { Badge, STATUS_TONE } from "../components/Badge";
 import { CorrectionHistory } from "../components/CorrectionHistory";
 import { DocumentViewer } from "../components/DocumentViewer";
 import { InvoiceForm } from "../components/InvoiceForm";
+import { JobHistory } from "../components/JobHistory";
 import { PagesText } from "../components/PagesText";
+import { ProcessingPanel } from "../components/ProcessingPanel";
 import { ReviewPanel } from "../components/ReviewPanel";
 import { FILE_TYPE_LABELS, formatBytes, formatDateTime, humanize } from "../lib/format";
 
-type Tab = "invoice" | "review" | "text" | "history";
+type Tab = "invoice" | "review" | "text" | "processing" | "history";
 
 export function DocumentDetailPage() {
   const { id = "" } = useParams();
@@ -26,7 +28,7 @@ export function DocumentDetailPage() {
   const processing = useProcessing(id);
   const invoice = useInvoice(id);
   const correct = useCorrectInvoice(id);
-  const retry = useRetry(id);
+  const retry = useRetry();
   const remove = useDeleteDocuments();
   const navigate = useNavigate();
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -60,6 +62,7 @@ export function DocumentDetailPage() {
     ["invoice", "Invoice"],
     ["review", openErrors ? `Review (${openErrors})` : "Review"],
     ["text", "Text"],
+    ["processing", job?.status === "failed" ? "Processing (failed)" : "Processing"],
     ["history", "History"],
   ];
 
@@ -101,31 +104,13 @@ export function DocumentDetailPage() {
         </p>
       )}
 
-      {job && (job.status === "queued" || job.status === "running") && (
-        <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
-          {humanize(job.kind)}: {job.status === "queued" ? "waiting" : humanize(job.stage ?? "starting")}
-          {job.progress_total ? ` (${job.progress_current}/${job.progress_total})` : ""}
-          {job.retry_scheduled && " — retrying after an error"}
-          {job.percent !== null && (
-            <div className="mt-2 h-1.5 overflow-hidden rounded bg-blue-100">
-              <div className="h-full bg-blue-600 transition-all" style={{ width: `${job.percent}%` }} />
-            </div>
-          )}
-        </div>
-      )}
-      {job?.status === "failed" && (
-        <div role="alert" className="flex items-center gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-900">
-          <span>
-            {humanize(job.kind)} failed: {job.error}
-          </span>
-          <button
-            onClick={() => retry.mutate()}
-            disabled={retry.isPending}
-            className="ml-auto rounded-md bg-red-600 px-3 py-1.5 font-medium text-white hover:bg-red-500 disabled:opacity-50"
-          >
-            Retry
-          </button>
-        </div>
+      {job && (
+        <ProcessingPanel
+          job={job}
+          onRetry={() => retry.mutate(id)}
+          retrying={retry.isPending}
+          retryError={retry.isError ? retry.error.message : null}
+        />
       )}
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -153,6 +138,7 @@ export function DocumentDetailPage() {
           </div>
           <div className="flex-1 overflow-y-auto p-4">
             {tab === "text" && <PagesText documentId={id} />}
+            {tab === "processing" && <JobHistory documentId={id} />}
             {tab === "history" && <CorrectionHistory documentId={id} />}
             {(tab === "invoice" || tab === "review") &&
               (invoice.isPending ? (

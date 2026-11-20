@@ -41,8 +41,54 @@ def _accuracy(counts: Counter[str]) -> dict[str, Any]:
     }
 
 
+def _percentile(values: Sequence[float], pct: float) -> float:
+    """Nearest-rank percentile (an actual observed value)."""
+    ordered = sorted(values)
+    rank = max(1, -(-len(ordered) * pct // 100))  # ceil
+    return ordered[int(rank) - 1]
+
+
+def _timing(values: Sequence[float]) -> dict[str, float | None]:
+    """Mean, median, 95th percentile and maximum, in seconds."""
+    if not values:
+        return {"mean": None, "median": None, "p95": None, "max": None}
+    return {
+        "mean": round(statistics.fmean(values), 3),
+        "median": round(statistics.median(values), 3),
+        "p95": round(_percentile(values, 95), 3),
+        "max": round(max(values), 3),
+    }
+
+
+def _failure_stage(error: str) -> str:
+    """Where a case failed: content extraction (parsing/OCR), the model
+    call, or before either (e.g. unsupported file)."""
+    if error.startswith("Content:"):
+        return "content_extraction"
+    if error.startswith("Model:"):
+        return "ai_extraction"
+    return "other"
+
+
+def _reliability(results: Sequence[CaseResult]) -> dict[str, Any]:
+    failed = [r for r in results if r.error]
+    stages = Counter(_failure_stage(r.error) for r in failed if r.error)
+    return {
+        "documents": len(results),
+        "succeeded": len(results) - len(failed),
+        "failed": len(failed),
+        "success_rate": _pct(len(results) - len(failed), len(results)),
+        "failure_rate": _pct(len(failed), len(results)),
+        "failures_by_stage": {
+            stage: stages[stage]
+            for stage in ("content_extraction", "ai_extraction", "other")
+        },
+    }
+
+
 def summarise(results: Sequence[CaseResult]) -> dict[str, Any]:
     scored = [r for r in results if r.score is not None]
+    succeeded = [r for r in results if r.error is None]
     fields: Counter[str] = Counter()
     per_field: dict[str, Counter[str]] = defaultdict(Counter)
     line_fields: Counter[str] = Counter()
@@ -112,6 +158,7 @@ def summarise(results: Sequence[CaseResult]) -> dict[str, Any]:
             }
             for fmt, group in sorted(by_format.items())
         },
+        "reliability": _reliability(results),
         "timing_seconds": {
             "content_median": round(
                 statistics.median(r.content_seconds for r in results), 3
@@ -123,6 +170,20 @@ def summarise(results: Sequence[CaseResult]) -> dict[str, Any]:
             )
             if results
             else None,
+            # Per successfully processed document, end to end.
+            "total": _timing([r.content_seconds + r.model_seconds for r in succeeded]),
+            "content_extraction": _timing([r.content_seconds for r in succeeded]),
+            "ai_extraction": _timing([r.model_seconds for r in succeeded]),
+            "total_by_format": {
+                fmt: _timing(
+                    [
+                        r.content_seconds + r.model_seconds
+                        for r in succeeded
+                        if r.case.format == fmt
+                    ]
+                )
+                for fmt in sorted({r.case.format for r in succeeded})
+            },
         },
         "tokens": {
             "input": tokens_in,
@@ -143,6 +204,10 @@ def _fmt(value: Any) -> str:
     )
 
 
+def _secs(value: float | None) -> str:
+    return "—" if value is None else f"{value:.2f} s"
+
+
 def _row(*cells: object) -> str:
     return "| " + " | ".join(str(cell) for cell in cells) + " |"
 
@@ -152,7 +217,10 @@ def render_markdown(summary: dict[str, Any], llm: str, dataset: str) -> str:
     lines = summary["line_items"]
     timing = summary["timing_seconds"]
     tokens = summary["tokens"]
+    reliability = summary["reliability"]
     headline = [
+        ("Document success rate (processed end to end)", reliability["success_rate"]),
+        ("Document failure rate", reliability["failure_rate"]),
         ("Documents fully correct (fields + line items)", summary["documents_exact"]),
         (
             "Documents with all header/party/total fields correct",
@@ -172,10 +240,7 @@ def render_markdown(summary: dict[str, Any], llm: str, dataset: str) -> str:
         ),
         ("Line-item field accuracy", lines["field_accuracy"]["accuracy"]),
         ("Extractions whose amount checks pass", summary["amount_checks_pass"]),
-        (
-            "Median content extraction / model time",
-            f"{timing['content_median']} s / {timing['model_median']} s",
-        ),
+        ("Median processing time per document", _secs(timing["total"]["median"])),
         (
             "Tokens (input / output / cache read)",
             f"{tokens['input']} / {tokens['output']} / {tokens['cache_read']}",
@@ -193,6 +258,48 @@ def render_markdown(summary: dict[str, Any], llm: str, dataset: str) -> str:
         _row("Metric", "Value"),
         _row("---", "---"),
         *[_row(label, _fmt(value)) for label, value in headline],
+        "",
+        "## Reliability",
+        "",
+        _row("Documents", "Succeeded", "Failed", "Success rate", "Failure rate"),
+        _row("---", "---", "---", "---", "---"),
+        _row(
+            reliability["documents"],
+            reliability["succeeded"],
+            reliability["failed"],
+            _fmt(reliability["success_rate"]),
+            _fmt(reliability["failure_rate"]),
+        ),
+        "",
+        "Failures by stage: "
+        + ", ".join(
+            f"{stage.replace('_', ' ')} {count}"
+            for stage, count in reliability["failures_by_stage"].items()
+        )
+        + ".",
+        "",
+        "## Processing time (per successful document)",
+        "",
+        _row("Stage", "Mean", "Median", "p95", "Max"),
+        _row("---", "---", "---", "---", "---"),
+        *[
+            _row(
+                label,
+                *(_secs(timing[key][s]) for s in ("mean", "median", "p95", "max")),
+            )
+            for label, key in (
+                ("Content extraction (parse / OCR)", "content_extraction"),
+                ("AI extraction (model call)", "ai_extraction"),
+                ("Total", "total"),
+            )
+        ],
+        *[
+            _row(
+                f"Total, {fmt}",
+                *(_secs(t[s]) for s in ("mean", "median", "p95", "max")),
+            )
+            for fmt, t in timing["total_by_format"].items()
+        ],
         "",
         "## By format",
         "",

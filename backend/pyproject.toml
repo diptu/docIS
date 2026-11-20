@@ -51,7 +51,7 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 
 pythonpath = ["."]
-asyncio_mode = "strict"
+asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 # Fail (with a stack dump of every thread) instead of hanging forever.
 timeout = 60
@@ -68,9 +68,10 @@ addopts = [
 ]
 
 markers = [
-    "unit: Unit tests",
-    "integration: Integration tests",
-    "api: API endpoint tests",
+    "unit: pure logic in isolation (tests/unit)",
+    "api: HTTP layer with the database and services mocked (tests/api)",
+    "integration: real database, filesystem, OCR or worker (tests/integration)",
+    "e2e: client workflows through the whole application (tests/e2e)",
     "postgres: needs a real PostgreSQL with pgvector (set TEST_POSTGRES_URL)",
     "embeddings: uses the real local embedding model (downloads ~64 MB once)",
 ]

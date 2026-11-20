@@ -1,6 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { ApiError, api, type ListParams } from "./client";
+import { ApiError, api, type JobListParams, type ListParams } from "./client";
 import type { InvoiceData, SearchMode } from "./types";
 
 const ACTIVE = new Set(["queued", "running"]);
@@ -28,6 +28,31 @@ export function useDocuments(params: ListParams) {
   });
 }
 
+/** Jobs across all documents; polls while any job is queued or running. */
+export function useJobs(params: JobListParams) {
+  return useQuery({
+    queryKey: ["jobs", params],
+    queryFn: () => api.listJobs(params),
+    placeholderData: keepPreviousData,
+    refetchInterval: (query) => {
+      const counts = query.state.data?.counts;
+      return counts && (counts.queued || counts.running) ? POLL_MS : false;
+    },
+  });
+}
+
+/** Every job of one document, newest first; polls while the latest is active. */
+export function useProcessingHistory(id: string) {
+  return useQuery({
+    queryKey: ["processing-history", id],
+    queryFn: () => api.getProcessingHistory(id),
+    refetchInterval: (query) => {
+      const latest = query.state.data?.[0];
+      return latest && ACTIVE.has(latest.status) ? POLL_MS : false;
+    },
+  });
+}
+
 export function useSearch(q: string, mode: SearchMode) {
   return useQuery({
     queryKey: ["search", q, mode],
@@ -49,11 +74,23 @@ export function useDocumentStats() {
   });
 }
 
+/** Upload limits; they only change when the backend is reconfigured. */
+export function useUploadLimits() {
+  return useQuery({
+    queryKey: ["upload-limits"],
+    queryFn: api.getUploadLimits,
+    staleTime: Infinity,
+  });
+}
+
 export function useUpload() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (files: File[]) => api.uploadDocuments(files),
-    onSuccess: () => client.invalidateQueries({ queryKey: ["documents"] }),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: ["documents"] });
+      void client.invalidateQueries({ queryKey: ["jobs"] });
+    },
   });
 }
 
@@ -64,11 +101,21 @@ export function useDeleteDocuments() {
     onSuccess: (result) => {
       // Drop cached detail data so nothing refetches a deleted document.
       for (const id of result.deleted) {
-        for (const key of ["document", "processing", "invoice", "pages", "sheets", "sheet", "corrections"]) {
+        for (const key of [
+          "document",
+          "processing",
+          "processing-history",
+          "invoice",
+          "pages",
+          "sheets",
+          "sheet",
+          "corrections",
+        ]) {
           client.removeQueries({ queryKey: [key, id] });
         }
       }
       void client.invalidateQueries({ queryKey: ["documents"] });
+      void client.invalidateQueries({ queryKey: ["jobs"] });
     },
   });
 }
@@ -89,6 +136,7 @@ export function useProcessing(id: string) {
         void client.invalidateQueries({ queryKey: ["pages", id] });
         void client.invalidateQueries({ queryKey: ["sheets", id] });
         void client.invalidateQueries({ queryKey: ["document", id] });
+        void client.invalidateQueries({ queryKey: ["processing-history", id] });
       }
       return job;
     },
@@ -97,11 +145,18 @@ export function useProcessing(id: string) {
   });
 }
 
-export function useRetry(id: string) {
+/** Retry a document's failed processing; `mutate(documentId)`. */
+export function useRetry() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: () => api.retryProcessing(id),
-    onSuccess: () => client.invalidateQueries({ queryKey: ["processing", id] }),
+    mutationFn: (id: string) => api.retryProcessing(id),
+    onSuccess: (_job, id) => {
+      for (const key of ["processing", "processing-history", "document"]) {
+        void client.invalidateQueries({ queryKey: [key, id] });
+      }
+      void client.invalidateQueries({ queryKey: ["jobs"] });
+      void client.invalidateQueries({ queryKey: ["documents"] });
+    },
   });
 }
 

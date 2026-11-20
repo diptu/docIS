@@ -40,6 +40,16 @@ class DocumentStats:
     avg_processing_seconds: float | None
 
 
+@dataclass(frozen=True)
+class JobEntry:
+    """A processing job with its document's name, for the job monitor."""
+
+    job: ProcessingJob
+    file_name: str
+    # The document's most recent job (older ones are history).
+    is_latest: bool
+
+
 class DocumentRepository:
     """Data access for documents and their extracted pages and sheets."""
 
@@ -141,6 +151,73 @@ class DocumentRepository:
             .order_by(ProcessingJob.created_at.desc(), ProcessingJob.id.desc())
             .limit(1)
         )
+
+    async def list_jobs(self, document_id: uuid.UUID) -> list[ProcessingJob]:
+        """Every processing job of a document, newest first."""
+        jobs = await self.session.scalars(
+            select(ProcessingJob)
+            .where(ProcessingJob.document_id == document_id)
+            .order_by(ProcessingJob.created_at.desc(), ProcessingJob.id.desc())
+        )
+        return list(jobs)
+
+    async def list_all_jobs(
+        self,
+        offset: int,
+        limit: int,
+        status: str | None = None,
+        kind: str | None = None,
+        latest_only: bool = False,
+    ) -> tuple[list[JobEntry], int, dict[str, int]]:
+        """A page of jobs across all documents, newest first; the total
+        matching count; and job counts by status (all statuses, same
+        ``kind`` and ``latest_only`` filters)."""
+        ranked = select(
+            ProcessingJob.id,
+            func.row_number()
+            .over(
+                partition_by=ProcessingJob.document_id,
+                order_by=(ProcessingJob.created_at.desc(), ProcessingJob.id.desc()),
+            )
+            .label("rank"),
+        ).subquery()
+        is_latest = ranked.c.rank == 1
+        scope: list[ColumnElement[bool]] = []
+        if kind is not None:
+            scope.append(ProcessingJob.kind == kind)
+        if latest_only:
+            scope.append(is_latest)
+        conditions = list(scope)
+        if status is not None:
+            conditions.append(ProcessingJob.status == status)
+
+        base = select(ProcessingJob).join(ranked, ranked.c.id == ProcessingJob.id)
+        counts: dict[str, int] = {
+            job_status: int(count)
+            for job_status, count in (
+                await self.session.execute(
+                    base.with_only_columns(ProcessingJob.status, func.count())
+                    .where(*scope)
+                    .group_by(ProcessingJob.status)
+                )
+            ).all()
+        }
+        total = await self.session.scalar(
+            base.with_only_columns(func.count()).where(*conditions)
+        )
+        rows = await self.session.execute(
+            base.add_columns(Document.file_name, is_latest)
+            .join(Document, Document.id == ProcessingJob.document_id)
+            .where(*conditions)
+            .order_by(ProcessingJob.created_at.desc(), ProcessingJob.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        entries = [
+            JobEntry(job=job, file_name=file_name, is_latest=bool(latest))
+            for job, file_name, latest in rows.all()
+        ]
+        return entries, int(total or 0), counts
 
     async def add_job(self, job: ProcessingJob) -> ProcessingJob:
         """Queue a job; a content job also resets its document to ``uploaded``."""

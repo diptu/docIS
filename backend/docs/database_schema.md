@@ -64,6 +64,7 @@ erDiagram
     }
 
     DOCUMENTS ||--o{ DOCUMENT_PAGES : "has pages"
+
     INVOICES {
         uuid id PK
         uuid document_id FK "NOT NULL, UNIQUE, ON DELETE CASCADE"
@@ -125,16 +126,13 @@ erDiagram
 
 ## Migrations
 
-The schema is managed by Alembic (`migrations/`). The initial revision
-`a7c60fb06eaa` creates the `documents` table; `b57b365d1cf4` adds
-`size_bytes` and `sha256` (nullable only for rows uploaded before it). Constraint names follow the
-naming convention in [`app/db/base.py`](../app/db/base.py).
-
+The schema is managed by Alembic (`migrations/`).
 ```bash
 task db-upgrade                       # apply all migrations
 task db-revision MSG="describe change" # autogenerate a new revision
 task db-check                         # fail if models and migrations differ
 ```
+
 
 ## Tables
 

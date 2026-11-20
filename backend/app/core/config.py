@@ -6,8 +6,11 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Allowance per file for multipart framing (boundary, part headers).
+MULTIPART_OVERHEAD_PER_FILE = 16 * 1024
 
 
 class Settings(BaseSettings):
@@ -17,7 +20,9 @@ class Settings(BaseSettings):
     database_url: str
 
     storage_dir: Path = Path("storage")
-    max_upload_size_bytes: int = Field(default=25 * 1024 * 1024, gt=0)
+    # Upload limits (MAX_UPLOAD_SIZE_MB, MAX_FILES_PER_UPLOAD). The size is
+    # per file, in MiB, and may be fractional (e.g. 0.5).
+    max_upload_size_mb: float = Field(default=20, gt=0)
     max_files_per_upload: int = Field(default=20, gt=0)
 
     # Tesseract language codes joined with "+", e.g. "eng+deu".
@@ -67,6 +72,31 @@ class Settings(BaseSettings):
     job_max_attempts: int = Field(default=3, ge=1)
     job_retry_base_seconds: float = Field(default=30.0, ge=0)
     job_retry_max_seconds: float = Field(default=900.0, ge=0)
+
+    @property
+    def max_upload_size_bytes(self) -> int:
+        """The per-file limit in bytes."""
+        return int(self.max_upload_size_mb * 1024 * 1024)
+
+    @property
+    def max_upload_request_bytes(self) -> int:
+        """The largest upload request body accepted before it is parsed:
+        the maximum number of files, each at the size limit, plus room for
+        multipart part headers and boundaries."""
+        return self.max_files_per_upload * (
+            self.max_upload_size_bytes + MULTIPART_OVERHEAD_PER_FILE
+        )
+
+    @field_validator("database_url")
+    @classmethod
+    def _use_asyncpg(cls, url: str) -> str:
+        """Accept the plain URLs hosts hand out (Render, Heroku, ...):
+        ``postgres://`` and ``postgresql://`` get the asyncpg driver the app
+        needs. URLs that already name a driver are left alone."""
+        for scheme in ("postgres://", "postgresql://"):
+            if url.startswith(scheme):
+                return "postgresql+asyncpg://" + url.removeprefix(scheme)
+        return url
 
     model_config = SettingsConfigDict(
         env_file=".env",

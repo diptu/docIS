@@ -5,6 +5,7 @@ import { useDeleteDocuments, useDocuments } from "../api/hooks";
 import type { DocumentDeleteResult, DocumentListItem } from "../api/types";
 import { Badge, STATUS_TONE } from "../components/Badge";
 import { StatsCards } from "../components/StatsCards";
+import { jobStep, ProgressBar } from "../components/JobProgress";
 import { UploadButton } from "../components/UploadButton";
 import { FILE_TYPE_LABELS, formatDateTime, formatMoney, humanize } from "../lib/format";
 
@@ -273,9 +274,29 @@ function Row({
       </td>
       <td className="px-4 py-2">
         {active ? (
-          <Badge tone="blue">{humanize(job.stage ?? job.status)}…</Badge>
+          <div className="w-36 space-y-1">
+            <Badge tone={job.retry_scheduled ? "amber" : "blue"}>
+              {jobStep(job)}
+              {job.status === "running" && job.percent !== null && ` ${Math.round(job.percent)}%`}…
+            </Badge>
+            {job.status === "running" && (
+              <ProgressBar percent={job.percent} label={`Progress of ${doc.file_name}`} />
+            )}
+            {job.retry_scheduled && job.error && (
+              <p title={job.error} className="truncate text-xs text-amber-800">
+                {job.error}
+              </p>
+            )}
+          </div>
         ) : job?.status === "failed" ? (
-          <Badge tone="red">{humanize(job.kind)} failed</Badge>
+          <div className="max-w-48 space-y-1">
+            <Badge tone="red">{humanize(job.kind)} failed</Badge>
+            {job.error && (
+              <p title={job.error} className="truncate text-xs text-red-700">
+                {job.error}
+              </p>
+            )}
+          </div>
         ) : (
           <Badge tone={STATUS_TONE[doc.status]}>{humanize(doc.status)}</Badge>
         )}

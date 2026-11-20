@@ -80,6 +80,28 @@ class ProcessingJobRead(BaseModel):
         return round(100 * self.progress_current / self.progress_total, 1)
 
 
+class ProcessingJobListItem(ProcessingJobRead):
+    """A processing job in the job monitor, with its document."""
+
+    document_id: uuid.UUID
+    file_name: str
+    is_latest: bool = Field(
+        description="The document's most recent job; only it can be retried"
+    )
+
+
+class ProcessingJobList(BaseModel):
+    """A page of processing jobs and job counts by status."""
+
+    items: list[ProcessingJobListItem]
+    total: int
+    offset: int
+    limit: int
+    counts: dict[str, int] = Field(
+        description="Jobs per status, ignoring the status filter"
+    )
+
+
 class DocumentPageRead(BaseModel):
     """Extracted content of one document page."""
 
@@ -219,6 +241,33 @@ class ProcessingSummary(BaseModel):
     kind: str
     status: str
     stage: str | None
+    percent: float | None = Field(
+        default=None, description="Completion of the current stage, 0-100"
+    )
+    attempts: int = 0
+    max_attempts: int = 1
+    retry_scheduled: bool = False
+    error: str | None = Field(
+        default=None, description="Last failure (also while a retry is scheduled)"
+    )
+
+    @classmethod
+    def of(cls, job: Any) -> "ProcessingSummary":
+        read = ProcessingJobRead.model_validate(job)
+        return cls(
+            **read.model_dump(
+                include={
+                    "kind",
+                    "status",
+                    "stage",
+                    "percent",
+                    "attempts",
+                    "max_attempts",
+                    "retry_scheduled",
+                    "error",
+                }
+            )
+        )
 
 
 class InvoiceSummary(BaseModel):
@@ -258,6 +307,14 @@ class DocumentStatsRead(BaseModel):
             "successful jobs, queue waits excluded); null until one completes"
         )
     )
+
+
+class UploadLimitsRead(BaseModel):
+    """Limits that apply to ``POST /documents`` (set in the environment)."""
+
+    max_file_size_bytes: int
+    max_file_size_mb: float
+    max_files_per_upload: int
 
 
 class DocumentDeleteRequest(BaseModel):

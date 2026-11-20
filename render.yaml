@@ -1,0 +1,87 @@
+# Render Blueprint for the docIS backend.
+#
+# Deploy: Render dashboard -> New -> Blueprint -> pick this repository.
+# You are asked once for ANTHROPIC_API_KEY (sync: false).
+#
+# Layout: one Docker web service runs the API, the Celery worker and Celery
+# beat together (backend/scripts/render-start.sh), because uploads live on a
+# persistent disk and a Render disk can be attached to only one service.
+# Postgres (with pgvector) and Key Value (Redis, the Celery broker) are
+# managed by Render and reached over the private network only.
+#
+# Plans: a persistent disk and preDeployCommand need a paid instance type
+# (not "free"). "standard" (2 GB RAM) leaves room for OCR plus the embedding
+# model in both the API and the worker process.
+
+databases:
+  - name: docis-db
+    databaseName: docis
+    user: docis
+    plan: basic-1gb
+    # Private network only: no connections from the internet.
+    ipAllowList: []
+
+services:
+  - type: keyvalue
+    name: docis-broker
+    plan: starter
+    # A task queue must never silently drop messages under memory pressure.
+    maxmemoryPolicy: noeviction
+    ipAllowList: []
+
+  - type: web
+    name: docis-api
+    runtime: docker
+    plan: standard
+    dockerContext: ./backend
+    dockerfilePath: ./backend/Dockerfile
+    # Runs as root first to make the disk writable, then drops to "app".
+    dockerCommand: /app/scripts/docker-entrypoint.sh /app/scripts/render-start.sh
+    # Schema changes run once per deploy, before the new version takes
+    # traffic; a failed migration stops the deploy.
+    preDeployCommand: alembic upgrade head
+    healthCheckPath: /health
+    # A service with a disk runs exactly one instance.
+    numInstances: 1
+    disk:
+      name: documents
+      mountPath: /app/storage
+      sizeGB: 10
+    buildFilter:
+      paths:
+        - backend/**
+      ignoredPaths:
+        - backend/tests/**
+        - backend/docs/**
+        - backend/evaluation/**
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: docis-db
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromService:
+          type: keyvalue
+          name: docis-broker
+          property: connectionString
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: STORAGE_DIR
+        value: /app/storage
+      # Upload limits: MB per file, files per request.
+      - key: MAX_UPLOAD_SIZE_MB
+        value: "20"
+      - key: MAX_FILES_PER_UPLOAD
+        value: "20"
+      # One task at a time keeps memory predictable on 2 GB; raise it on a
+      # larger instance.
+      - key: WORKER_CONCURRENCY
+        value: "1"
+      - key: OCR_LANGUAGES
+        value: eng
+      - key: INVOICE_EXTRACTION_ENABLED
+        value: "true"
+      - key: LLM_MODEL
+        value: claude-opus-5-5
+      - key: LLM_EFFORT
+        value: medium

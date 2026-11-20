@@ -4,6 +4,7 @@ import { Link, NavLink, Route, Routes, useLocation, useNavigate } from "react-ro
 import { SearchIcon } from "./components/SearchIcon";
 import { DocumentDetailPage } from "./pages/DocumentDetailPage";
 import { DocumentsPage } from "./pages/DocumentsPage";
+import { ProcessingPage } from "./pages/ProcessingPage";
 import { SearchPage } from "./pages/SearchPage";
 
 const navClass = ({ isActive }: { isActive: boolean }) =>
@@ -54,6 +55,9 @@ export function App() {
             <NavLink to="/" end className={navClass}>
               Documents
             </NavLink>
+            <NavLink to="/processing" className={navClass}>
+              Processing
+            </NavLink>
             <NavLink to="/search" className={navClass}>
               Search
             </NavLink>
@@ -65,6 +69,7 @@ export function App() {
         <Routes>
           <Route path="/" element={<DocumentsPage />} />
           <Route path="/documents/:id" element={<DocumentDetailPage />} />
+          <Route path="/processing" element={<ProcessingPage />} />
           <Route path="/search" element={<SearchPage />} />
           <Route path="*" element={<p>Page not found.</p>} />
         </Routes>

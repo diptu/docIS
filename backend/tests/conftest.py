@@ -1,4 +1,16 @@
-"""Shared fixtures."""
+"""Fixtures shared by every test layer.
+
+Layers (selected with ``-m``; the marker is applied from the directory):
+
+* ``unit``: pure logic, no database, network or external binaries.
+* ``api``: HTTP layer through ``httpx.AsyncClient``; database and
+  services replaced with test doubles (``tests/api/conftest.py``).
+* ``integration``: real collaborators: SQLite (``session_factory`` below),
+  the filesystem, Tesseract, the worker pipeline; and PostgreSQL with
+  pgvector under ``tests/integration/postgres`` (needs TEST_POSTGRES_URL).
+* ``e2e``: client workflows through the whole app with a real database and
+  an in-process worker (``tests/e2e/conftest.py``).
+"""
 
 import asyncio
 import os
@@ -28,6 +40,19 @@ from app.db.base import Base
 
 if TYPE_CHECKING:
     from app.worker.runtime import Runtime
+
+LAYERS = ("unit", "api", "integration", "e2e")
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Mark each test with its layer, taken from its directory under tests/."""
+    root = Path(__file__).parent
+    for item in items:
+        parts = item.path.relative_to(root).parts
+        if parts and parts[0] in LAYERS:
+            item.add_marker(parts[0])
+        if parts[:2] == ("integration", "postgres"):
+            item.add_marker("postgres")
 
 
 @pytest.fixture
@@ -105,39 +130,3 @@ def make_runtime(
         )
 
     return build
-
-
-async def run_due_jobs(
-    runtime: "Runtime", session_factory: async_sessionmaker[AsyncSession]
-) -> int:
-    """Run every queued job that is due, until none are left (like workers).
-
-    With zero retry backoff, retries are due immediately and run too.
-    """
-    from sqlalchemy import or_, select
-
-    from app.models import JobStatus, ProcessingJob
-    from app.worker.jobs import execute_job
-    from app.worker.queue import utcnow
-
-    runs = 0
-    while True:
-        async with session_factory() as session:
-            due = list(
-                await session.scalars(
-                    select(ProcessingJob.id)
-                    .where(
-                        ProcessingJob.status == JobStatus.QUEUED,
-                        or_(
-                            ProcessingJob.next_run_at.is_(None),
-                            ProcessingJob.next_run_at <= utcnow(),
-                        ),
-                    )
-                    .order_by(ProcessingJob.created_at)
-                )
-            )
-        if not due:
-            return runs
-        for job_id in due:
-            await execute_job(runtime, job_id, "test-worker")
-            runs += 1

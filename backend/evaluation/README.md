@@ -48,6 +48,8 @@ compares letters and digits case-insensitively; dates exactly; amounts within
 | Hallucination rate | invented values among absent fields: should be ~0 |
 | Line-item precision / recall / F1 | extracted lines that match / expected lines found |
 | Amount checks pass | extractions whose subtotal/tax/total add up |
+| Document success / failure rate | documents processed end to end without an error, and the rest (split by stage: content extraction, AI extraction, other) |
+| Processing time | per successful document: mean, median, p95 and max for content extraction, the model call and the total; totals per format |
 
 Breakdowns by format and per field show where errors concentrate (e.g. OCR
 on scans, or day/month order on US dates).

@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useNavigate, useParams } from "react-router";
 
 import { api } from "../api/client";
 import {
   useCorrectInvoice,
+  useDeleteDocuments,
   useDocument,
   useInvoice,
   useProcessing,
@@ -26,6 +27,9 @@ export function DocumentDetailPage() {
   const invoice = useInvoice(id);
   const correct = useCorrectInvoice(id);
   const retry = useRetry(id);
+  const remove = useDeleteDocuments();
+  const navigate = useNavigate();
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("invoice");
 
   if (document.isPending) return <p className="text-slate-500">Loading…</p>;
@@ -37,6 +41,19 @@ export function DocumentDetailPage() {
     );
 
   const doc = document.data;
+  const deleteDocument = () => {
+    if (!window.confirm(`Delete "${doc.file_name}"? Its file and extracted data are removed permanently.`))
+      return;
+    setDeleteError(null);
+    remove.mutate([doc.id], {
+      onSuccess: (result) => {
+        if (result.in_progress.length)
+          setDeleteError("This document is being processed; delete it once processing has finished.");
+        else void navigate("/");
+      },
+      onError: (error) => setDeleteError(error.message),
+    });
+  };
   const job = processing.data;
   const openErrors = invoice.data?.review.errors.filter((e) => !e.resolved).length ?? 0;
   const tabs: [Tab, string][] = [
@@ -67,8 +84,22 @@ export function DocumentDetailPage() {
           >
             Download original
           </a>
+          <button
+            type="button"
+            onClick={deleteDocument}
+            disabled={remove.isPending}
+            className="rounded-md border border-red-300 bg-white px-3 py-1.5 text-sm text-red-700 hover:bg-red-50 disabled:opacity-60"
+          >
+            {remove.isPending ? "Deleting…" : "Delete"}
+          </button>
         </div>
       </div>
+
+      {deleteError && (
+        <p role="alert" className="text-sm text-red-700">
+          Could not delete: {deleteError}
+        </p>
+      )}
 
       {job && (job.status === "queued" || job.status === "running") && (
         <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">

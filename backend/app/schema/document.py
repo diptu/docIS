@@ -241,6 +241,41 @@ class DocumentListItem(DocumentRead):
     unresolved_errors: int
 
 
+class DocumentStatsRead(BaseModel):
+    """Key figures for the documents overview.
+
+    Outcomes follow each document's latest processing job, so a document
+    whose invoice extraction failed counts as failed.
+    """
+
+    total: int
+    completed: int = Field(description="Latest processing job succeeded")
+    failed: int = Field(description="Latest processing job failed")
+    in_progress: int = Field(description="Queued or running")
+    avg_processing_seconds: float | None = Field(
+        description=(
+            "Mean time workers spent on a completed document (all its "
+            "successful jobs, queue waits excluded); null until one completes"
+        )
+    )
+
+
+class DocumentDeleteRequest(BaseModel):
+    """Documents to delete."""
+
+    ids: list[uuid.UUID] = Field(min_length=1, max_length=200)
+
+
+class DocumentDeleteResult(BaseModel):
+    """Which requested documents were deleted, and why others were not."""
+
+    deleted: list[uuid.UUID]
+    in_progress: list[uuid.UUID] = Field(
+        description="Being processed right now; delete them once finished."
+    )
+    not_found: list[uuid.UUID]
+
+
 class DocumentList(BaseModel):
     """A page of documents; ``total`` counts every match."""
 

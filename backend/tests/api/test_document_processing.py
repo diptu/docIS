@@ -868,3 +868,198 @@ def test_list_documents_when_there_are_none(client: TestClient) -> None:
         "offset": 0,
         "limit": 50,
     }
+
+
+# ------------------------------------------------------------------ deletion
+
+
+def _set_job_status(
+    session_factory: async_sessionmaker[AsyncSession], document_id: str, status: str
+) -> None:
+    from sqlalchemy import update
+
+    from app.models import ProcessingJob
+
+    async def run() -> None:
+        async with session_factory() as session:
+            await session.execute(
+                update(ProcessingJob)
+                .where(ProcessingJob.document_id == uuid.UUID(document_id))
+                .values(status=status)
+            )
+            await session.commit()
+
+    asyncio.run(run())
+
+
+def test_delete_document_removes_record_extractions_and_file(
+    client: TestClient, run_worker: Callable[[], int], tmp_path: Path
+) -> None:
+    keep, gone = client.post(
+        "/documents",
+        files=[("files", ("keep.csv", CSV_BYTES)), ("files", ("gone.csv", CSV_BYTES))],
+    ).json()
+    run_worker()
+    stored = tmp_path / "storage" / gone["storage_path"]
+    assert stored.exists()
+
+    response = client.delete(f"/documents/{gone['id']}")
+
+    assert response.status_code == 204
+    assert not stored.exists()
+    assert (tmp_path / "storage" / keep["storage_path"]).exists()
+    for suffix in ("", "/sheets", "/processing", "/file"):
+        assert client.get(f"/documents/{gone['id']}{suffix}").status_code == 404
+    listed = client.get("/documents").json()
+    assert [d["id"] for d in listed["items"]] == [keep["id"]]
+
+
+def test_delete_unknown_document_returns_404(client: TestClient) -> None:
+    assert client.delete(f"/documents/{uuid.uuid4()}").status_code == 404
+
+
+def test_document_being_processed_cannot_be_deleted(
+    client: TestClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    document = client.post("/documents", files=[("files", ("a.csv", CSV_BYTES))])
+    document_id = document.json()[0]["id"]
+    _set_job_status(session_factory, document_id, "running")
+
+    response = client.delete(f"/documents/{document_id}")
+
+    assert response.status_code == 409
+    assert "being processed" in response.json()["detail"]
+    assert client.get(f"/documents/{document_id}").status_code == 200
+
+
+def test_queued_document_can_be_deleted_and_its_job_is_skipped(
+    client: TestClient, run_worker: Callable[[], int]
+) -> None:
+    upload = client.post("/documents", files=[("files", ("a.csv", CSV_BYTES))])
+    document_id = upload.json()[0]["id"]
+
+    assert client.delete(f"/documents/{document_id}").status_code == 204
+    assert run_worker() == 0
+
+
+def test_bulk_delete_reports_each_document(
+    client: TestClient,
+    run_worker: Callable[[], int],
+    session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
+) -> None:
+    first, second, busy = client.post(
+        "/documents",
+        files=[("files", (f"{n}.csv", CSV_BYTES)) for n in ("a", "b", "c")],
+    ).json()
+    run_worker()
+    _set_job_status(session_factory, busy["id"], "running")
+    missing = str(uuid.uuid4())
+
+    response = client.post(
+        "/documents/delete",
+        json={"ids": [first["id"], missing, busy["id"], second["id"], first["id"]]},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "deleted": [first["id"], second["id"]],
+        "in_progress": [busy["id"]],
+        "not_found": [missing],
+    }
+    assert [d["id"] for d in client.get("/documents").json()["items"]] == [busy["id"]]
+    assert not (tmp_path / "storage" / first["storage_path"]).exists()
+    assert (tmp_path / "storage" / busy["storage_path"]).exists()
+
+
+@pytest.mark.parametrize("ids", [[], ["not-a-uuid"], [str(uuid.uuid4())] * 201])
+def test_bulk_delete_validates_ids(client: TestClient, ids: list[str]) -> None:
+    assert client.post("/documents/delete", json={"ids": ids}).status_code == 422
+
+
+def test_deleting_a_duplicate_resolves_the_flag_on_the_original(
+    client: TestClient, run_worker_with_llm: Callable[[object], int]
+) -> None:
+    from tests.fakes import FakeInvoiceLLM
+
+    first = _upload_and_extract(
+        client, run_worker_with_llm, make_text_pdf("Invoice one"), FakeInvoiceLLM()
+    )
+    second = _upload_and_extract(
+        client, run_worker_with_llm, make_text_pdf("Invoice again"), FakeInvoiceLLM()
+    )
+    assert client.get(f"/documents/{first}/invoice").json()["review"]["needs_review"]
+
+    assert client.delete(f"/documents/{second}").status_code == 204
+
+    body = client.get(f"/documents/{first}/invoice").json()
+    assert body["duplicates"] == []
+    assert body["review"]["needs_review"] is False
+    [error] = body["review"]["errors"]
+    assert (error["code"], error["resolved"]) == ("duplicate", True)
+    assert error["details"]["document_ids"] == []
+
+
+# --------------------------------------------------------------------- stats
+
+
+def test_stats_when_there_are_no_documents(client: TestClient) -> None:
+    assert client.get("/documents/stats").json() == {
+        "total": 0,
+        "completed": 0,
+        "failed": 0,
+        "in_progress": 0,
+        "avg_processing_seconds": None,
+    }
+
+
+def test_stats_count_latest_jobs_and_average_processing_time(
+    client: TestClient,
+    run_worker: Callable[[], int],
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import update
+
+    from app.models import ProcessingJob
+
+    fast, slow, broken = (
+        d["id"]
+        for d in client.post(
+            "/documents",
+            files=[("files", (f"{n}.csv", CSV_BYTES)) for n in ("a", "b", "c")],
+        ).json()
+    )
+    run_worker()
+    queued = client.post("/documents", files=[("files", ("d.csv", CSV_BYTES))])
+    assert queued.status_code == 201
+
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+
+    async def set_times() -> None:
+        async with session_factory() as session:
+            for document_id, seconds in ((fast, 2.0), (slow, 4.5), (broken, 60.0)):
+                await session.execute(
+                    update(ProcessingJob)
+                    .where(ProcessingJob.document_id == uuid.UUID(document_id))
+                    .values(
+                        started_at=start,
+                        finished_at=start + timedelta(seconds=seconds),
+                    )
+                )
+            await session.commit()
+
+    asyncio.run(set_times())
+    # A failed latest job counts as failed, and its time is not averaged.
+    _set_job_status(session_factory, broken, "failed")
+
+    stats = client.get("/documents/stats").json()
+
+    assert {k: v for k, v in stats.items() if k != "avg_processing_seconds"} == {
+        "total": 4,
+        "completed": 2,
+        "failed": 1,
+        "in_progress": 1,
+    }
+    assert stats["avg_processing_seconds"] == pytest.approx(3.25, abs=0.01)

@@ -1,5 +1,7 @@
 import type {
+  DocumentDeleteResult,
   DocumentList,
+  DocumentStats,
   DocumentListItem,
   DocumentPage,
   DocumentRead,
@@ -7,6 +9,8 @@ import type {
   InvoiceData,
   InvoiceRead,
   ProcessingJob,
+  SearchMode,
+  SearchResults,
   SheetRows,
   SheetSummary,
   ValidationErrorItem,
@@ -70,11 +74,17 @@ export const api = {
     const suffix = query.size ? `?${query}` : "";
     return request(`/documents${suffix}`);
   },
+  search: (q: string, mode: SearchMode, limit = 20): Promise<SearchResults> =>
+    request(`/search?${new URLSearchParams({ q, mode, limit: String(limit) })}`),
+  getStats: (): Promise<DocumentStats> => request("/documents/stats"),
   uploadDocuments(files: File[]): Promise<DocumentListItem[]> {
     const form = new FormData();
     for (const file of files) form.append("files", file);
     return request("/documents", { method: "POST", body: form });
   },
+  /** Delete documents and everything extracted from them. Cannot be undone. */
+  deleteDocuments: (ids: string[]): Promise<DocumentDeleteResult> =>
+    request("/documents/delete", json("POST", { ids })),
   getDocument: (id: string): Promise<DocumentRead> => request(`/documents/${id}`),
   getProcessing: (id: string): Promise<ProcessingJob> =>
     request(`/documents/${id}/processing`),

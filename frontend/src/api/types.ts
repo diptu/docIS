@@ -37,6 +37,24 @@ export interface DocumentListItem extends DocumentRead {
   unresolved_errors: number;
 }
 
+/** Key figures for the documents overview (outcomes by latest job). */
+export interface DocumentStats {
+  total: number;
+  completed: number;
+  failed: number;
+  in_progress: number;
+  /** Mean worker time per completed document; null until one completes. */
+  avg_processing_seconds: number | null;
+}
+
+/** Outcome of a delete request, per document ID. */
+export interface DocumentDeleteResult {
+  deleted: string[];
+  /** Being processed right now; can be deleted once processing finishes. */
+  in_progress: string[];
+  not_found: string[];
+}
+
 export interface DocumentList {
   items: DocumentListItem[];
   total: number;
@@ -160,4 +178,26 @@ export interface InvoiceCorrection {
   id: string;
   changes: Record<string, { old: unknown; new: unknown }>;
   created_at: string;
+}
+
+export type SearchMode = "keyword" | "semantic" | "hybrid";
+
+/** A matching passage; keyword matches are wrapped in U+0002 … U+0003. */
+export interface SearchSnippet {
+  text: string;
+  page_number: number | null;
+  sheet_name: string | null;
+}
+
+export interface SearchHit {
+  document: { id: string; file_name: string; file_type: string; status: string };
+  score: number;
+  matched: ("keyword" | "semantic" | "file_name")[];
+  snippets: SearchSnippet[];
+}
+
+export interface SearchResults {
+  query: string;
+  mode: SearchMode;
+  hits: SearchHit[];
 }

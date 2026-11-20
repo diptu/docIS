@@ -29,12 +29,15 @@ from app.extraction.validation import check_to_dict, validate_amounts
 from app.models.document import Document, DocumentStatus
 from app.repositories.document import DocumentRepository
 from app.schema.document import (
+    DocumentDeleteRequest,
+    DocumentDeleteResult,
     DocumentList,
     DocumentListItem,
     DocumentPageRead,
     DocumentRead,
     DocumentSheetRows,
     DocumentSheetSummary,
+    DocumentStatsRead,
     DuplicateRead,
     InvoiceCorrectionRead,
     InvoiceExtractionUsage,
@@ -91,6 +94,57 @@ async def upload_documents(
     """
     documents = await service.upload(files)
     return [DocumentRead.model_validate(document) for document in documents]
+
+
+@router.post("/delete", summary="Delete several documents")
+async def delete_documents(
+    body: DocumentDeleteRequest,
+    service: Annotated[DocumentService, Depends(get_document_service)],
+) -> DocumentDeleteResult:
+    """Delete documents, everything extracted from them, and their files.
+
+    Each ID is reported as deleted, in progress (a job is running; try again
+    once it has finished) or not found. Deleting cannot be undone.
+    """
+    result = await service.delete(body.ids)
+    return DocumentDeleteResult(
+        deleted=result.deleted,
+        in_progress=result.in_progress,
+        not_found=result.not_found,
+    )
+
+
+@router.delete(
+    "/{document_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a document",
+    responses={
+        **_NOT_FOUND,
+        status.HTTP_409_CONFLICT: {"description": "The document is being processed"},
+    },
+)
+async def delete_document(
+    document_id: uuid.UUID,
+    service: Annotated[DocumentService, Depends(get_document_service)],
+) -> None:
+    """Delete a document, everything extracted from it, and its file."""
+    await service.delete_one(document_id)
+
+
+@router.get("/stats", summary="Document counts and processing time")
+async def document_stats(
+    repository: Annotated[DocumentRepository, Depends(get_document_repository)],
+) -> DocumentStatsRead:
+    """Total documents, how many completed or failed processing (by their
+    latest job), how many are in progress, and the average processing time."""
+    stats = await repository.stats()
+    return DocumentStatsRead(
+        total=stats.total,
+        completed=stats.completed,
+        failed=stats.failed,
+        in_progress=stats.in_progress,
+        avg_processing_seconds=stats.avg_processing_seconds,
+    )
 
 
 @router.get("", summary="List uploaded documents")

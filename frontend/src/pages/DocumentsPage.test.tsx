@@ -17,9 +17,13 @@ function renderPage() {
   );
 }
 
+const STATS = { total: 4, completed: 2, failed: 1, in_progress: 1, avg_processing_seconds: 125 };
+const isStats = (url: unknown) => String(url).endsWith("/documents/stats");
+const statsResponse = () => new Response(JSON.stringify(STATS), { status: 200 });
+
 function mockList(items: ReturnType<typeof listItem>[]) {
-  return vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
-    new Response(JSON.stringify({ items, total: items.length, offset: 0, limit: 25 }), {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (url) =>
+    isStats(url) ? statsResponse() : new Response(JSON.stringify({ items, total: items.length, offset: 0, limit: 25 }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     }),
@@ -74,11 +78,96 @@ it("filters by review state", async () => {
 });
 
 it("shows load errors", async () => {
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
     new Response(JSON.stringify({ detail: "Database unavailable" }), { status: 503 }),
   );
 
   renderPage();
 
-  expect(await screen.findByRole("alert")).toHaveTextContent("Database unavailable");
+  expect(
+    await screen.findByText("Could not load documents: Database unavailable"),
+  ).toBeInTheDocument();
+  expect(
+    await screen.findByText("Could not load statistics: Database unavailable"),
+  ).toBeInTheDocument();
+});
+
+it("shows the KPI cards", async () => {
+  mockList([listItem()]);
+  renderPage();
+
+  await screen.findByText("1 in progress");
+  const card = (name: string) => screen.findByRole("group", { name });
+  expect(await card("Total documents")).toHaveTextContent("41 in progress");
+  expect(await card("Avg processing time")).toHaveTextContent("2m 05s");
+  expect(await card("Completed")).toHaveTextContent("250% of all documents");
+  expect(await card("Failed")).toHaveTextContent("125% of all documents");
+});
+
+describe("deleting documents", () => {
+  const second = () =>
+    listItem({ id: "22222222-2222-2222-2222-222222222222", file_name: "scan.png" });
+
+  function mockApi(result: object) {
+    let items = [listItem(), second()];
+    return vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      if (isStats(url)) return statsResponse();
+      if (init?.method === "POST") {
+        const { ids } = JSON.parse(String(init.body)) as { ids: string[] };
+        const kept = (result as { in_progress: string[] }).in_progress;
+        items = items.filter((d) => !ids.includes(d.id) || kept.includes(d.id));
+        return new Response(JSON.stringify(result), { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({ items, total: items.length, offset: 0, limit: 25 }),
+        { status: 200 },
+      );
+    });
+  }
+
+  it("deletes the selected documents after confirmation", async () => {
+    const fetch = mockApi({ deleted: [second().id], in_progress: [], not_found: [] });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderPage();
+
+    await userEvent.click(await screen.findByLabelText("Select scan.png"));
+    await userEvent.click(screen.getByRole("button", { name: "Delete 1" }));
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('"scan.png"'));
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/documents/delete",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ ids: [second().id] }) }),
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent("1 document deleted.");
+    await vi.waitFor(() => expect(screen.queryByText("scan.png")).not.toBeInTheDocument());
+    expect(screen.getByText("invoice.pdf")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Delete/ })).not.toBeInTheDocument();
+  });
+
+  it("selects every row on the page and keeps documents still being processed", async () => {
+    mockApi({ deleted: [listItem().id], in_progress: [second().id], not_found: [] });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderPage();
+
+    await userEvent.click(await screen.findByLabelText("Select all documents on this page"));
+    await userEvent.click(screen.getByRole("button", { name: "Delete 2" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "1 document deleted. 1 document kept because it is being processed",
+    );
+    expect(await screen.findByRole("button", { name: "Delete 1" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Select scan.png")).toBeChecked();
+  });
+
+  it("does nothing when the confirmation is cancelled", async () => {
+    const fetch = mockApi({ deleted: [], in_progress: [], not_found: [] });
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    renderPage();
+
+    await userEvent.click(await screen.findByLabelText("Select scan.png"));
+    await userEvent.click(screen.getByRole("button", { name: "Delete 1" }));
+
+    expect(fetch.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+    expect(screen.getByLabelText("Select scan.png")).toBeChecked();
+  });
 });

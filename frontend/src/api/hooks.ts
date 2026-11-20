@@ -1,7 +1,7 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { ApiError, api, type ListParams } from "./client";
-import type { InvoiceData } from "./types";
+import type { InvoiceData, SearchMode } from "./types";
 
 const ACTIVE = new Set(["queued", "running"]);
 const POLL_MS = 2000;
@@ -28,11 +28,48 @@ export function useDocuments(params: ListParams) {
   });
 }
 
+export function useSearch(q: string, mode: SearchMode) {
+  return useQuery({
+    queryKey: ["search", q, mode],
+    queryFn: () => api.search(q, mode),
+    enabled: q.length > 0,
+    // Keep showing the last results while a new query loads.
+    placeholderData: keepPreviousData,
+    // A config error (e.g. semantic search disabled) won't fix itself.
+    retry: false,
+  });
+}
+
+export function useDocumentStats() {
+  return useQuery({
+    // Under ["documents"], so uploads and deletes refresh it too.
+    queryKey: ["documents", "stats"],
+    queryFn: api.getStats,
+    refetchInterval: (query) => (query.state.data?.in_progress ? POLL_MS : false),
+  });
+}
+
 export function useUpload() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (files: File[]) => api.uploadDocuments(files),
     onSuccess: () => client.invalidateQueries({ queryKey: ["documents"] }),
+  });
+}
+
+export function useDeleteDocuments() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => api.deleteDocuments(ids),
+    onSuccess: (result) => {
+      // Drop cached detail data so nothing refetches a deleted document.
+      for (const id of result.deleted) {
+        for (const key of ["document", "processing", "invoice", "pages", "sheets", "sheet", "corrections"]) {
+          client.removeQueries({ queryKey: [key, id] });
+        }
+      }
+      void client.invalidateQueries({ queryKey: ["documents"] });
+    },
   });
 }
 

@@ -2,7 +2,10 @@
 Document ingestion business logic.
 """
 
+import logging
 import uuid
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import PurePosixPath
 
 from fastapi import UploadFile
@@ -30,7 +33,20 @@ from app.services.validators import ContentMismatchError, CorruptedContentError
 from app.storage.local import LocalStorage, StorageLimitExceededError
 from app.worker.dispatch import JobDispatcher, no_dispatch
 
+logger = logging.getLogger(__name__)
+
 ORIGINALS_PREFIX = "originals"
+
+
+@dataclass(frozen=True)
+class DeleteResult:
+    """Outcome of a delete request, per document ID (in request order)."""
+
+    deleted: list[uuid.UUID]
+    in_progress: list[uuid.UUID]
+    not_found: list[uuid.UUID]
+
+
 MAX_FILE_NAME_LENGTH = 255
 
 
@@ -147,6 +163,44 @@ class DocumentService:
             ) from None
         await self.dispatcher([job.id])
         return job
+
+    async def delete(self, document_ids: Sequence[uuid.UUID]) -> DeleteResult:
+        """Delete documents with everything extracted from them, and their
+        stored originals.
+
+        Documents whose processing job is running are skipped (retry once it
+        has finished); unknown IDs are reported as not found. A queued job of
+        a deleted document is dropped: the worker finds nothing to claim.
+        """
+        ids = list(dict.fromkeys(document_ids))
+        documents, busy = await self.repository.delete_documents(ids)
+        # Files go only after commit: a failed delete must keep them.
+        for document in documents:
+            try:
+                await self.storage.delete(document.storage_path)
+            except OSError:
+                logger.exception(
+                    "Could not remove stored file %s of deleted document %s",
+                    document.storage_path,
+                    document.id,
+                )
+        deleted = {document.id for document in documents}
+        return DeleteResult(
+            deleted=[i for i in ids if i in deleted],
+            in_progress=[i for i in ids if i in busy],
+            not_found=[i for i in ids if i not in deleted and i not in busy],
+        )
+
+    async def delete_one(self, document_id: uuid.UUID) -> None:
+        """Delete one document; 404 if unknown, 409 while it is processed."""
+        result = await self.delete([document_id])
+        if result.not_found:
+            raise NotFoundError(f"Document {document_id} not found.")
+        if result.in_progress:
+            raise ConflictError(
+                f"Document {document_id} is being processed; "
+                "delete it once processing has finished."
+            )
 
     async def _store(self, upload: UploadFile) -> Document:
         name = clean_file_name(upload.filename)

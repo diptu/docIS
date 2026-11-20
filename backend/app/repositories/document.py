@@ -5,10 +5,13 @@ Persistence operations for documents.
 import datetime as dt
 import uuid
 from collections.abc import Sequence
+from dataclasses import dataclass
 from decimal import Decimal
+from typing import Any
 
-from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy import ColumnElement, and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import InstrumentedAttribute
 
 from app.extraction.review import (
     POSSIBLE_DUPLICATE_MESSAGE,
@@ -23,7 +26,18 @@ from app.models.document_chunk import DocumentChunk
 from app.models.document_page import DocumentPage
 from app.models.document_sheet import DocumentSheet
 from app.models.invoice import DocumentValidationError, Invoice, InvoiceCorrection
-from app.models.processing_job import JobKind, ProcessingJob
+from app.models.processing_job import JobKind, JobStatus, ProcessingJob
+
+
+@dataclass(frozen=True)
+class DocumentStats:
+    """Document counts by processing outcome, and average processing time."""
+
+    total: int
+    completed: int
+    failed: int
+    in_progress: int
+    avg_processing_seconds: float | None
 
 
 class DocumentRepository:
@@ -144,6 +158,140 @@ class DocumentRepository:
             raise
         await self.session.refresh(job)
         return job
+
+    async def stats(self) -> DocumentStats:
+        """Counts by each document's latest job, and the average time spent
+        processing a completed document (queue waits excluded)."""
+        total = await self.session.scalar(select(func.count()).select_from(Document))
+        latest = select(
+            ProcessingJob.document_id,
+            ProcessingJob.status,
+            func.row_number()
+            .over(
+                partition_by=ProcessingJob.document_id,
+                order_by=(ProcessingJob.created_at.desc(), ProcessingJob.id.desc()),
+            )
+            .label("rank"),
+        ).subquery()
+        latest_only = latest.c.rank == 1
+        by_status: dict[str, int] = {
+            status: int(count)
+            for status, count in (
+                await self.session.execute(
+                    select(latest.c.status, func.count())
+                    .where(latest_only)
+                    .group_by(latest.c.status)
+                )
+            ).all()
+        }
+
+        completed = select(latest.c.document_id).where(
+            latest_only, latest.c.status == JobStatus.SUCCEEDED
+        )
+        # Every successful job of a completed document (content, then
+        # invoice extraction) adds to its processing time.
+        seconds, timed = (
+            await self.session.execute(
+                select(
+                    func.sum(
+                        self._seconds_between(
+                            ProcessingJob.started_at, ProcessingJob.finished_at
+                        )
+                    ),
+                    func.count(func.distinct(ProcessingJob.document_id)),
+                ).where(
+                    ProcessingJob.document_id.in_(completed),
+                    ProcessingJob.status == JobStatus.SUCCEEDED,
+                    ProcessingJob.started_at.is_not(None),
+                    ProcessingJob.finished_at.is_not(None),
+                )
+            )
+        ).one()
+        return DocumentStats(
+            total=int(total or 0),
+            completed=by_status.get(JobStatus.SUCCEEDED, 0),
+            failed=by_status.get(JobStatus.FAILED, 0),
+            in_progress=by_status.get(JobStatus.QUEUED, 0)
+            + by_status.get(JobStatus.RUNNING, 0),
+            avg_processing_seconds=float(seconds) / timed if timed else None,
+        )
+
+    def _seconds_between(
+        self,
+        start: InstrumentedAttribute[dt.datetime | None],
+        end: InstrumentedAttribute[dt.datetime | None],
+    ) -> ColumnElement[Any]:
+        """``end - start`` in seconds, in the session's SQL dialect."""
+        if self.session.get_bind().dialect.name == "sqlite":
+            return (func.julianday(end) - func.julianday(start)) * 86400.0
+        return func.extract("epoch", end - start)
+
+    async def delete_documents(
+        self, document_ids: Sequence[uuid.UUID]
+    ) -> tuple[list[Document], set[uuid.UUID]]:
+        """Delete documents (pages, sheets, chunks, jobs and invoices cascade).
+
+        Documents with a running job are kept, since a worker is writing
+        their results. Their jobs are locked first, so a worker cannot claim
+        one between this check and the delete. Duplicate flags on other
+        documents that pointed only at deleted documents are resolved.
+
+        Returns the deleted documents (to remove their files) and the IDs
+        kept because they are being processed. Unknown IDs are in neither.
+        """
+        ids = list(dict.fromkeys(document_ids))
+        try:
+            jobs = await self.session.execute(
+                select(ProcessingJob.document_id, ProcessingJob.status)
+                .where(ProcessingJob.document_id.in_(ids))
+                .with_for_update()
+            )
+            busy = {
+                document_id
+                for document_id, status in jobs.all()
+                if status == JobStatus.RUNNING
+            }
+            documents = list(
+                await self.session.scalars(
+                    select(Document).where(
+                        Document.id.in_(ids), Document.id.not_in(busy)
+                    )
+                )
+            )
+            deleted = [document.id for document in documents]
+            if deleted:
+                await self.session.execute(
+                    delete(Document).where(Document.id.in_(deleted))
+                )
+                await self._drop_duplicate_references(deleted)
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
+        return documents, busy
+
+    async def _drop_duplicate_references(self, deleted: Sequence[uuid.UUID]) -> None:
+        """Remove deleted documents from other documents' duplicate errors;
+        an error left without any duplicate is resolved."""
+        removed = {str(document_id) for document_id in deleted}
+        errors = await self.session.scalars(
+            select(DocumentValidationError).where(
+                DocumentValidationError.code.in_(
+                    [ReasonCode.DUPLICATE, ReasonCode.POSSIBLE_DUPLICATE]
+                ),
+                DocumentValidationError.resolved.is_(False),
+            )
+        )
+        for error in errors:
+            ids = list(error.details.get("document_ids", []))
+            remaining = [i for i in ids if i not in removed]
+            if remaining == ids:
+                continue
+            # Reassign (not mutate) so the JSON change is detected.
+            error.details = {**error.details, "document_ids": remaining}
+            if not remaining:
+                error.resolved = True
+                error.resolved_at = dt.datetime.now(dt.UTC)
 
     # ---------------------------------------------------------------- invoices
 

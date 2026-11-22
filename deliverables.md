@@ -301,9 +301,15 @@ The extracted fields are:
 - supplier (vendor) and customer details
 - currency, subtotal, tax, total, amount due
 - line items: description, code, quantity, unit price, tax rate, amount
-- `is_invoice` classification and `uncertain_fields`
+- `document_type` (`invoice`, `credit_note` or `other`), `is_invoice` (true for invoices and credit notes) and `uncertain_fields`
 
 The prompt tells the model to copy values exactly as printed and to return `null` for anything not stated. Doubtful values are listed in `uncertain_fields` instead of being guessed.
+
+**Credit notes and amount signs.** Credit notes, credit memos and debit notes are billing documents, extracted in full like invoices.
+- **Sign convention** (the same one UBL uses): amounts are positive magnitudes in the document's own direction, and `document_type` gives the direction. A credit note for 100.00 is stored as `total_amount = 100.00`, whether printed as `-100.00`, `(100.00)` or `100.00 CR`. To post it to a ledger, negate it.
+- **Negative values** appear only on itemised lines that run against the document: a discount line on an invoice, or a restocking fee on a credit note. Adjustments printed below the subtotal, such as a credit applied or a payment received, are not line items.
+- **Enforcement:** normalisation applies the convention even when the model returns a credit note's amounts negative, keeping each line's quantity × unit price consistent with its amount.
+- **Duplicates:** matching only compares documents of the same type, so a credit note that reverses an invoice is not flagged as its duplicate.
 
 **6. Financial validation and duplicate detection**
 
@@ -452,10 +458,10 @@ This was measured after adding image clean-up. It checks OCR output only, with n
 - **Not yet measured:** the Claude extraction evaluation above was run before this change and has not been re-run.
 
 #### Known limitations
-- **Credit notes:**
-  - 7 of 10 were classified `is_invoice = false`, because the schema defines an invoice as "requesting payment".
-  - 3 had negative amounts where the ground truth is positive.
-  - This is a definition mismatch rather than misreading.
+- **Credit notes (fixed since this run):**
+  - In the run above, 7 of 10 were classified as "not an invoice", because the schema defined an invoice as "requesting payment". The other 3 had negative amounts where the ground truth is positive.
+  - After adding `document_type` and the sign convention, a Claude run on the 10 credit notes, the "Credit Applied" invoice and the 2 account statements got **13 of 13 documents fully correct**: every field and line item. Before, the credit notes were 0 of 10 fully correct, with 25.0% of fields right. That run cost $0.13.
+  - The full 181-document evaluation has not been re-run since.
 - **Images:**
   - Handwritten and damaged photos cause OCR misreads.
   - Perspective distortion (a page photographed at an angle on a table) is not corrected, and blurred photos remain hard to read.

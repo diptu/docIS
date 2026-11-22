@@ -79,14 +79,26 @@ def test_converted_label_maps_fields_and_scoring() -> None:
     assert expected["line_items"][0]["amount"] == 100.0
 
 
-def test_a_statement_only_scores_is_invoice() -> None:
+def test_a_statement_only_scores_its_type() -> None:
     label = convert_label(
         source_label(document_type="other", scored=["vendor_name", "document_type"])
     )
 
-    assert label["scored_fields"] == ["is_invoice"]
+    assert label["scored_fields"] == ["document_type", "is_invoice"]
+    assert label["expected"]["document_type"] == "other"
     assert label["expected"]["is_invoice"] is False
     assert label["expected"]["vendor"]["name"] is None
+
+
+def test_a_credit_note_is_a_billing_document_with_positive_amounts() -> None:
+    label = convert_label(
+        source_label(document_type="credit_note", scored=["document_type", "total"])
+    )
+
+    assert label["scored_fields"] == ["document_type", "is_invoice", "total_amount"]
+    assert label["expected"]["document_type"] == "credit_note"
+    assert label["expected"]["is_invoice"] is True
+    assert label["expected"]["total_amount"] == 110.0
 
 
 def test_convert_writes_the_harness_layout(tmp_path: Path) -> None:

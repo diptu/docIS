@@ -101,6 +101,7 @@ class InvoiceExtractor:
                 vendor_key=vendor_key(data.vendor),
                 invoice_date=data.invoice_date,
                 total_amount=_decimal(data.total_amount),
+                document_type=data.document_type,
             )
             errors = build_validation_errors(
                 data,

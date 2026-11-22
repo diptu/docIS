@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
-import type { InvoiceData, ValidationCheck } from "../api/types";
+import type { DocumentType, InvoiceData, ValidationCheck } from "../api/types";
 import {
   CHECK_FIELDS,
   emptyLine,
@@ -9,6 +9,12 @@ import {
   type InvoiceForm as Form,
   type LineForm,
 } from "./invoiceFormState";
+
+const DOCUMENT_TYPES: [DocumentType, string][] = [
+  ["invoice", "Invoice"],
+  ["credit_note", "Credit note"],
+  ["other", "Not an invoice"],
+];
 
 interface Props {
   invoice: InvoiceData;
@@ -91,14 +97,28 @@ export function InvoiceForm({ invoice, checks, saving, saveError, onSave }: Prop
 
   return (
     <form onSubmit={submit} className="space-y-6" noValidate>
-      <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          checked={form.is_invoice}
-          onChange={(e) => setForm({ ...form, is_invoice: e.target.checked })}
-        />
-        This document is an invoice
-      </label>
+      <div className="space-y-1">
+        <label className="flex items-center gap-2 text-sm">
+          Document type
+          <select
+            className="rounded border border-slate-300 px-2 py-1 text-sm"
+            value={form.document_type}
+            onChange={(e) => setForm({ ...form, document_type: e.target.value as DocumentType })}
+          >
+            {DOCUMENT_TYPES.map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        {form.document_type === "credit_note" && (
+          <p className="text-xs text-slate-500">
+            Enter credited amounts as positive numbers, even if the document prints them as −100.00, (100.00)
+            or 100.00 CR. Use a negative amount only for a line that reduces the credit, such as a restocking fee.
+          </p>
+        )}
+      </div>
 
       <Section title="Invoice">
         {field("invoice_number")}

@@ -78,6 +78,15 @@ it("lists documents with their invoice and review state", async () => {
   expect(within(third!).getByText("2 open")).toBeInTheDocument();
 });
 
+it("marks credit notes in the list", async () => {
+  mockList([listItem({ invoice: { ...listItem().invoice!, document_type: "credit_note", invoice_number: "CN-7" } })]);
+
+  renderPage();
+
+  const row = (await screen.findByText("CN-7")).closest("tr")!;
+  expect(within(row).getByText("Credit note")).toBeInTheDocument();
+});
+
 it("filters by review state", async () => {
   const fetch = mockList([]);
   renderPage();

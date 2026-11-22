@@ -72,7 +72,8 @@ erDiagram
     INVOICES {
         uuid id PK
         uuid document_id FK "NOT NULL, UNIQUE, ON DELETE CASCADE"
-        boolean is_invoice "NOT NULL"
+        varchar(20) document_type "NOT NULL, invoice | credit_note | other"
+        boolean is_invoice "NOT NULL, true for invoice or credit note"
         varchar(100) invoice_number "indexed"
         date invoice_date
         date due_date
@@ -248,6 +249,17 @@ column; anything not stated is NULL) plus one `invoice_line_items` row per
 billed line, in document order. Amounts are exact `NUMERIC`. The model and
 token usage are kept on the invoice. Re-extraction replaces the invoice,
 its line items and the document's validation errors.
+
+`document_type` is `invoice`, `credit_note` or `other`, and `is_invoice`
+is true for the first two. **Amount sign convention:** amounts are positive
+magnitudes in the document's own direction, so a credit note for 100.00
+stores `total_amount` 100.00 whether it was printed as -100.00, (100.00) or
+100.00 CR (negate it to post to a ledger). Only itemised lines running
+against the document are negative (a discount line on an invoice, a
+restocking fee on a credit note). Normalisation enforces this even when the
+model returns a credit note's amounts negative. Duplicate matching by
+number or by vendor, date and total only compares documents of the same
+type, so a credit note reversing an invoice is not its duplicate.
 
 `validation_errors` lists problems for human review. Severity `error`:
 a failed amount check (`line_amounts`, `lines_subtotal`, `tax_amount`,

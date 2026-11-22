@@ -55,6 +55,11 @@ class Invoice(TimestampMixin, Base):
         nullable=False,
         unique=True,
     )
+    # invoice | credit_note | other (app.extraction.schema.DocumentType).
+    # Amounts are positive magnitudes in this document's own direction.
+    document_type: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="invoice", server_default="invoice"
+    )
     is_invoice: Mapped[bool] = mapped_column(Boolean, nullable=False)
 
     invoice_number: Mapped[str | None] = mapped_column(String(100), index=True)

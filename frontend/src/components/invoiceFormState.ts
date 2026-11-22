@@ -1,7 +1,7 @@
 // Form state for editing an InvoiceData. Inputs hold raw strings so partial
 // input ("12.") is never rejected mid-typing; conversion happens on save.
 
-import type { InvoiceData, InvoiceLineItem, Party } from "../api/types";
+import type { DocumentType, InvoiceData, InvoiceLineItem, Party } from "../api/types";
 
 export const TEXT_FIELDS = [
   "invoice_number",
@@ -19,7 +19,7 @@ type LineKey = (typeof LINE_TEXT)[number] | (typeof LINE_NUMBERS)[number];
 export type LineForm = Record<LineKey, string>;
 
 export interface InvoiceForm {
-  is_invoice: boolean;
+  document_type: DocumentType;
   fields: Record<string, string>; // "invoice_number", "vendor.name", ...
   lines: LineForm[];
 }
@@ -35,7 +35,7 @@ export function toForm(invoice: InvoiceData): InvoiceForm {
     for (const key of PARTY_FIELDS) fields[`${party}.${key}`] = str(invoice[party][key]);
   }
   return {
-    is_invoice: invoice.is_invoice,
+    document_type: invoice.document_type,
     fields,
     lines: invoice.line_items.map(lineToForm),
   };
@@ -114,7 +114,8 @@ export function fromForm(form: InvoiceForm, original: InvoiceData): ConversionRe
   });
 
   const invoice: InvoiceData = {
-    is_invoice: form.is_invoice,
+    document_type: form.document_type,
+    is_invoice: form.document_type !== "other",
     invoice_number: text(f.invoice_number ?? ""),
     invoice_date: date("invoice_date"),
     due_date: date("due_date"),

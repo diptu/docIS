@@ -38,8 +38,8 @@ def test_perfect_extraction_is_exact() -> None:
     score = score_invoice(sample_invoice(), sample_invoice())
 
     assert score.exact and score.fields_ok
-    assert len(score.fields) == 21
-    assert score.outcomes()[CORRECT] + score.outcomes()[CORRECT_NULL] == 21
+    assert len(score.fields) == 22
+    assert score.outcomes()[CORRECT] + score.outcomes()[CORRECT_NULL] == 22
 
 
 def test_mistakes_are_classified() -> None:

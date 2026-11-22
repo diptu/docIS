@@ -180,6 +180,71 @@ async def test_same_vendor_date_and_total_is_a_possible_duplicate(
     ]
 
 
+async def test_a_credit_note_reversing_an_invoice_is_not_its_duplicate(
+    session_factory: Factory,
+) -> None:
+    """Same vendor, date and (positive) total, but opposite directions."""
+    invoice = await add_document(session_factory)
+    credit = await add_document(session_factory)
+
+    await extract(session_factory, invoice)
+    await extract(
+        session_factory,
+        credit,
+        document_type="credit_note",
+        invoice_number="CN-2026-001",
+    )
+
+    assert await errors_of(session_factory, invoice) == []
+    assert await errors_of(session_factory, credit) == []
+
+
+async def test_the_same_credit_note_twice_is_a_duplicate(
+    session_factory: Factory,
+) -> None:
+    first = await add_document(session_factory)
+    second = await add_document(session_factory)
+
+    for document in (first, second):
+        await extract(
+            session_factory,
+            document,
+            document_type="credit_note",
+            invoice_number="CN-2026-001",
+        )
+
+    assert await errors_of(session_factory, second) == [
+        ("duplicate", "error", {"document_ids": [str(first)]})
+    ]
+
+
+async def test_a_credit_note_printed_negative_is_stored_positive(
+    session_factory: Factory,
+) -> None:
+    document = await add_document(session_factory)
+    credit = sample_invoice(document_type="credit_note", is_invoice=True)
+    negative = credit.model_copy(
+        update={
+            "subtotal": -credit.subtotal,  # type: ignore[operator]
+            "tax_amount": -credit.tax_amount,  # type: ignore[operator]
+            "total_amount": -credit.total_amount,  # type: ignore[operator]
+            "line_items": [
+                line.model_copy(update={"amount": -line.amount})  # type: ignore[operator]
+                for line in credit.line_items
+            ],
+        }
+    )
+
+    await InvoiceExtractor(session_factory, FakeInvoiceLLM(negative)).extract(document)
+
+    stored = await invoice_of(session_factory, document)
+    assert stored.document_type == "credit_note"
+    assert stored.is_invoice is True
+    assert stored.total_amount == Decimal(str(credit.total_amount))
+    assert all(item.amount > 0 for item in stored.line_items)
+    assert await errors_of(session_factory, document) == []
+
+
 async def test_different_vendor_is_not_a_duplicate(session_factory: Factory) -> None:
     first = await add_document(session_factory)
     second = await add_document(session_factory)

@@ -459,12 +459,17 @@ class DocumentRepository:
         vendor_key: str | None,
         invoice_date: dt.date | None,
         total_amount: Decimal | None,
+        document_type: str = "invoice",
     ) -> list[tuple[uuid.UUID, DuplicateMatch]]:
         """Other documents that duplicate this one, strongest match first.
 
         * same file: identical SHA-256 of the stored original;
         * same invoice number: same vendor and normalised invoice number;
         * possible: same vendor, invoice date and total, other number.
+
+        Number and possible matches only compare documents of the same type:
+        a credit note reversing an invoice has the same vendor and total (and
+        often date) but is not a duplicate of it.
         """
         found: dict[uuid.UUID, DuplicateMatch] = {}
         if sha256:
@@ -492,6 +497,7 @@ class DocumentRepository:
                     select(Invoice.document_id, Invoice.invoice_number_key).where(
                         Invoice.document_id != document_id,
                         Invoice.is_invoice.is_(True),
+                        Invoice.document_type == document_type,
                         Invoice.vendor_key == vendor_key,
                         or_(*conditions),
                     )

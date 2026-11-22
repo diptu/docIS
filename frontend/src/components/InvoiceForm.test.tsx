@@ -105,3 +105,22 @@ it("shows the server's error message when saving fails", () => {
   );
   expect(screen.getByRole("alert")).toHaveTextContent("Input should be a valid date");
 });
+
+it("saves a credit note as a billing document", async () => {
+  const { onSave, user } = setup([]);
+
+  await user.selectOptions(screen.getByLabelText("Document type"), "Credit note");
+  expect(screen.getByText(/Enter credited amounts as positive numbers/)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Save corrections" }));
+
+  expect(onSave.mock.calls[0]![0]).toEqual(invoice({ document_type: "credit_note", is_invoice: true }));
+});
+
+it("marks a document as not an invoice", async () => {
+  const { onSave, user } = setup([]);
+
+  await user.selectOptions(screen.getByLabelText("Document type"), "Not an invoice");
+  await user.click(screen.getByRole("button", { name: "Save corrections" }));
+
+  expect(onSave.mock.calls[0]![0]).toMatchObject({ document_type: "other", is_invoice: false });
+});

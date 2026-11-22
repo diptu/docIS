@@ -194,6 +194,7 @@ async def list_documents(
                 processing=ProcessingSummary.of(job) if job is not None else None,
                 invoice=(
                     InvoiceSummary(
+                        document_type=invoice.document_type,
                         is_invoice=invoice.is_invoice,
                         invoice_number=invoice.invoice_number,
                         vendor_name=invoice.vendor_name,
@@ -397,15 +398,21 @@ async def get_document_invoice(
     """Return the invoice data extracted from the document by Claude.
 
     Every schema field is present; anything the document does not state is
-    `null`. `invoice.is_invoice` is false for documents that are not
-    invoices. Extraction runs as an `extract_invoice` job after content
-    extraction; follow it with `GET /documents/{id}/processing`.
+    `null`. `invoice.document_type` is `invoice`, `credit_note` or `other`;
+    `invoice.is_invoice` is true for invoices and credit notes. Amounts are
+    positive magnitudes in the document's own direction, so a credit note
+    for 100.00 has `total_amount` 100.00 (negate it to post to a ledger);
+    only itemised lines running against the document, such as a discount
+    line on an invoice, are negative. Extraction runs as an
+    `extract_invoice` job after content extraction; follow it with
+    `GET /documents/{id}/processing`.
 
     `validation` holds the arithmetic checks (line amounts, subtotal, tax,
     total, amount due). `duplicates` lists other documents that are the same
     file, have the same vendor and invoice number, or (`possible`) the same
-    vendor, date and total. `review` lists the document's validation errors;
-    it needs review while any is unresolved.
+    vendor, date and total, among documents of the same type. `review`
+    lists the document's validation errors; it needs review while any is
+    unresolved.
     """
     document = await _get_document_or_404(repository, document_id)
     return await _invoice_response(repository, document, settings)

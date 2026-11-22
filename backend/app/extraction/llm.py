@@ -28,10 +28,18 @@ from typical values, or invent placeholders. An empty line_items list is \
 correct when no billed lines are shown.
 - Copy identifiers (invoice numbers, tax IDs, PO numbers, product codes) \
 exactly as printed, including prefixes and separators.
-- Amounts: plain numbers in the invoice currency, exactly as printed. Do not \
-recompute, round, or correct totals, even if they look inconsistent; \
-validation happens separately. Convert number formats to plain decimals \
-("1.250,00" or "1,250.00" both become 1250.00).
+- Amounts: plain numbers in the document currency, with the digits exactly as \
+printed. Do not recompute, round, or correct totals, even if they look \
+inconsistent; validation happens separately. Convert number formats to plain \
+decimals ("1.250,00" or "1,250.00" both become 1250.00).
+- Amount signs: report amounts as positive magnitudes in the document's own \
+direction, on invoices and credit notes alike. A credit note's subtotal, tax, \
+total and credited lines are positive even when printed as "-1,250.00", \
+"(1,250.00)" or "1,250.00 CR". A line item is negative only when it sits in the \
+itemised list, counts toward the subtotal and runs against the document, such \
+as a discount line on an invoice or a restocking fee on a credit note. \
+Adjustments printed below the subtotal (credit applied, payments received, \
+deposits) are not line items; leave them out of line_items.
 - Dates as YYYY-MM-DD. Resolve ambiguous numeric dates using the document's \
 country, language or currency; if still ambiguous, prefer the day-first \
 reading for European documents and month-first for US documents.
@@ -39,9 +47,12 @@ reading for European documents and month-first for US documents.
 the party billed (bill-to). Do not swap them because of page layout.
 - Include every billed line item in document order. Skip pure subtotal, tax \
 and total rows; those belong in subtotal, tax_amount and total_amount.
-- If the document is not an invoice (for example a contract, receipt-less \
-letter or price list), set is_invoice to false and leave all other fields \
-null or empty.
+- document_type: "invoice" for invoices, bills and debit notes; \
+"credit_note" for credit notes, credit memos and "nota de crédito" (they \
+refund or reduce what the customer owes; extract them fully, like invoices, \
+with is_invoice true). Use "other" only for documents that are neither, such \
+as statements, quotes, contracts or price lists; then set is_invoice to false \
+and leave all other fields null or empty.
 - List in uncertain_fields every field whose value you are not confident \
 about: illegible or garbled (OCR) text, several conflicting candidates, or \
 an ambiguous date. A field you set to null because it is absent is not \

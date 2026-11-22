@@ -7,6 +7,7 @@ import type {
 } from "../api/types";
 
 export const invoice = (overrides: Partial<InvoiceData> = {}): InvoiceData => ({
+  document_type: "invoice",
   is_invoice: true,
   invoice_number: "INV-2026-001",
   invoice_date: "2026-11-03",
@@ -88,6 +89,7 @@ export const listItem = (overrides: Partial<DocumentListItem> = {}): DocumentLis
   updated_at: "2026-11-19T10:00:00Z",
   processing: summary(),
   invoice: {
+    document_type: "invoice",
     is_invoice: true,
     invoice_number: "INV-2026-001",
     vendor_name: "ACME GmbH",

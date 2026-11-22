@@ -81,6 +81,7 @@ class InvoiceCorrectionService:
             total_amount=(
                 Decimal(str(new.total_amount)) if new.total_amount is not None else None
             ),
+            document_type=new.document_type,
         )
         errors = build_validation_errors(
             new,

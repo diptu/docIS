@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 TOLERANCE = Decimal("0.01")
 
 HEADER_FIELDS = (
+    "document_type",
     "is_invoice",
     "invoice_number",
     "invoice_date",

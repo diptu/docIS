@@ -29,7 +29,15 @@ export interface ProcessingSummary {
   error: string | null;
 }
 
+/**
+ * "invoice" charges the customer; "credit_note" refunds or reduces what they
+ * owe; "other" is not a billing document. Amounts are positive in the
+ * document's own direction: a credit note for 100.00 has total_amount 100.00.
+ */
+export type DocumentType = "invoice" | "credit_note" | "other";
+
 export interface InvoiceSummary {
+  document_type: DocumentType;
   is_invoice: boolean;
   invoice_number: string | null;
   vendor_name: string | null;
@@ -131,6 +139,8 @@ export interface InvoiceLineItem {
 }
 
 export interface InvoiceData {
+  document_type: DocumentType;
+  /** True for invoices and credit notes; always matches document_type. */
   is_invoice: boolean;
   invoice_number: string | null;
   invoice_date: string | null; // YYYY-MM-DD

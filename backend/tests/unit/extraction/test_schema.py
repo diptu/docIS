@@ -76,3 +76,14 @@ def test_uncertain_fields_is_a_closed_list() -> None:
     items = transform_schema(InvoiceData)["properties"]["uncertain_fields"]["items"]
 
     assert "total_amount" in items["enum"] and "vendor" in items["enum"]
+
+
+def test_document_type_is_required_and_limited_to_three_values() -> None:
+    schema = InvoiceData.model_json_schema()
+
+    assert "document_type" in schema["required"]
+    assert schema["properties"]["document_type"]["enum"] == [
+        "invoice",
+        "credit_note",
+        "other",
+    ]

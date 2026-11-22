@@ -16,9 +16,12 @@ ignored):
 
 * vendor_name -> vendor.name; tax -> tax_amount; total -> total_amount;
   invoice_number, invoice_date, due_date, currency, subtotal unchanged.
-* document_type -> is_invoice: "invoice" and "credit_note" are True, "other"
-  (statements and the like) is False. For "other" only is_invoice is scored:
-  this app leaves every field of a non-invoice empty by design.
+* document_type -> document_type (same values: invoice, credit_note, other)
+  and is_invoice: "invoice" and "credit_note" are True, "other" (statements
+  and the like) is False. For "other" only these two are scored: this app
+  leaves every field of a non-invoice empty by design.
+* Amounts follow this app's sign convention as given: positive magnitudes
+  in the document's own direction, credit notes included.
 * line_items -> line.description and line.amount (the labels have nothing
   else per line). ``alt_amounts`` (a line's amount in a second currency) is
   not accepted as an alternative: the primary amount must match.
@@ -52,7 +55,7 @@ SCORED = {
     "subtotal": ("subtotal",),
     "tax": ("tax_amount",),
     "total": ("total_amount",),
-    "document_type": ("is_invoice",),
+    "document_type": ("document_type", "is_invoice"),
     "line_items": ("line.description", "line.amount"),
 }
 UNMAPPED = {"flag", "references"}  # flag becomes should_flag
@@ -70,10 +73,11 @@ def convert_label(source: dict[str, Any]) -> dict[str, Any]:
     if unknown := set(e["scored"]) - SCORED.keys() - UNMAPPED:
         raise ValueError(f"{source['doc_id']}: unknown scored field(s) {unknown}")
     if not is_invoice:
-        scored = ["is_invoice"]
+        scored = ["document_type", "is_invoice"]
 
     expected = InvoiceData.model_validate(
         {
+            "document_type": e["document_type"],
             "is_invoice": is_invoice,
             "invoice_number": e["invoice_number"] if is_invoice else None,
             "invoice_date": e["invoice_date"] if is_invoice else None,

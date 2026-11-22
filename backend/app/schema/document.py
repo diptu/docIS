@@ -273,6 +273,7 @@ class ProcessingSummary(BaseModel):
 class InvoiceSummary(BaseModel):
     """Key fields of a document's extracted invoice."""
 
+    document_type: str
     is_invoice: bool
     invoice_number: str | None
     vendor_name: str | None

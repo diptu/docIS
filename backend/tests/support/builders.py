@@ -72,6 +72,7 @@ def build_invoice(document_id: uuid.UUID, **overrides: Any) -> Invoice:
     invoice = Invoice(
         id=uuid.uuid4(),
         document_id=document_id,
+        document_type="invoice",
         is_invoice=True,
         invoice_number="INV-2026-001",
         invoice_date=dt.date(2026, 11, 3),

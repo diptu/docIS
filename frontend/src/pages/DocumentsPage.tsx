@@ -333,7 +333,10 @@ function Row({
         {doc.invoice ? (
           doc.invoice.is_invoice ? (
             <>
-              <div>{doc.invoice.invoice_number ?? "—"}</div>
+              <div className="flex items-center gap-2">
+                {doc.invoice.invoice_number ?? "—"}
+                {doc.invoice.document_type === "credit_note" && <Badge tone="blue">Credit note</Badge>}
+              </div>
               <div className="text-xs text-slate-500">{doc.invoice.vendor_name ?? "Unknown vendor"}</div>
             </>
           ) : (

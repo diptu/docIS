@@ -48,6 +48,8 @@ def sample_invoice(**overrides: Any) -> "InvoiceData":
     from app.extraction.schema import InvoiceData, InvoiceLineItem, Party
 
     values: dict[str, Any] = {
+        # A non-invoice override implies document type "other".
+        "document_type": ("invoice" if overrides.get("is_invoice", True) else "other"),
         "is_invoice": True,
         "invoice_number": "INV-2026-001",
         "invoice_date": dt.date(2026, 11, 3),

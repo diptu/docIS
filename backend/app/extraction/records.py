@@ -4,10 +4,11 @@ Conversion between the extraction schema (InvoiceData) and database rows.
 
 import uuid
 from decimal import Decimal
+from typing import cast
 
 from app.extraction.llm import LLMExtraction
 from app.extraction.normalize import invoice_number_key, vendor_key
-from app.extraction.schema import InvoiceData, InvoiceLineItem, Party
+from app.extraction.schema import DocumentType, InvoiceData, InvoiceLineItem, Party
 from app.models.invoice import Invoice
 from app.models.invoice import InvoiceLineItem as LineItemRow
 
@@ -35,6 +36,7 @@ def invoice_from_data(
     vendor, customer = data.vendor, data.customer
     return Invoice(
         document_id=document_id,
+        document_type=data.document_type,
         is_invoice=data.is_invoice,
         invoice_number=_clip(data.invoice_number, 100),
         invoice_date=data.invoice_date,
@@ -82,6 +84,7 @@ def invoice_from_data(
 def data_from_invoice(invoice: Invoice) -> InvoiceData:
     """Rebuild the schema-valid result from the stored rows."""
     return InvoiceData(
+        document_type=cast(DocumentType, invoice.document_type),
         is_invoice=invoice.is_invoice,
         invoice_number=invoice.invoice_number,
         invoice_date=invoice.invoice_date,

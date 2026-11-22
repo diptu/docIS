@@ -189,6 +189,7 @@ def make_invoice(rng: random.Random, number: int) -> tuple[InvoiceData, Locale]:
     deposit = _q(total * Decimal("0.3")) if rng.random() < 0.2 else None
 
     data = InvoiceData(
+        document_type="invoice",
         is_invoice=True,
         invoice_number=f"{rng.choice(['INV', 'RE', 'NW', 'GX'])}-2026-{number:04d}",
         invoice_date=issued,

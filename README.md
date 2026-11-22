@@ -58,11 +58,6 @@ docIS/
 └── README.md
 ```
 
-## Application Pages
-
-- **Documents** (`/`) — Browse, upload, filter, and manage documents.
-- **Document Intelligence** (`/documents/:id`) — View extracted content, review invoice data, and inspect processing history.
-- **Search** (`/search`) — Search across document content.
 
 ## Development
 
@@ -84,3 +79,103 @@ Refer to `backend/docs/` and the backend/frontend project configuration files fo
 
 Make unstructured business documents easier to process and understand by combining document extraction, structured data validation, human review, and intelligent search in one platform.
 
+## Prerequisites
+- Python (V 3.11.9+) and uv Package manager
+- Node.js and npm
+- PostgreSQL with pgvector support
+- Redis
+- Tesseract OCR
+
+## Getting Started
+
+1. Clone the repository
+```bash
+git clone https://github.com/diptu/docIS.git
+cd docIS
+```
+2. Configure the environment
+
+
+Create the backend environment file using the project's environment template:
+```bash
+cp backend/.env.example backend/.env
+```
+Configure the required PostgreSQL connection, Redis connection, Anthropic API key, and other application settings in the environment file.
+
+
+3. Start PostgreSQL and Redis
+
+Ensure PostgreSQL with pgvector and Redis are running and accessible using the configured connection settings.
+
+4. Backend Setup
+```bash
+cd backend
+uv sync
+```
+Run database migrations:
+```bash
+uv run alembic upgrade head
+```
+
+Start the API server:
+```bash
+uv run uvicorn app.main:app --reload --port 8000
+```
+
+5. Start the Background Worker
+
+In a separate terminal:
+```bash
+cd backend
+uv run celery -A app.workers.celery_app worker --loglevel=info
+
+```
+Adjust the Celery application import path if the worker entry point differs in your checkout.
+
+6. Frontend Setup
+
+In a separate terminal:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+Open the Vite development URL displayed in the terminal.
+
+#### API Documentation
+
+Once the backend is running, interactive API documentation is available at:
+
+Swagger UI: ```http://localhost:8000/docs```
+
+ReDoc:``` http://localhost:8000/redoc```
+
+Development Commands
+
+Backend
+```bash
+uv sync
+uv run alembic upgrade head
+uv run pytest
+```
+Frontend
+
+```bash
+npm install
+npm run dev
+npm run build
+npm run test
+```
+Run commands from their respective backend/ and frontend/ directories.
+
+
+## Application Pages
+
+- **Documents** (`/`) — Browse, upload, filter, and manage documents.
+- **Document Intelligence** (`/documents/:id`) — View extracted content, review invoice data, and inspect processing history.
+- **Search** (`/search`) — Search across document content.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).

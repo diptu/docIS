@@ -518,6 +518,7 @@ async def update_document_validation_error(
     return ValidationErrorRead.model_validate(error)
 
 
+@router.head("/{document_id}/file", include_in_schema=False)
 @router.get(
     "/{document_id}/file",
     summary="Download or display the original file",
@@ -535,7 +536,9 @@ async def get_document_file(
     """The stored original, byte-for-byte, with its validated media type.
 
     Shown inline by default (so a browser can display PDFs and images);
-    `?download=true` asks the browser to save it. Non-PDF responses are
+    `?download=true` asks the browser to save it. `HEAD` answers with the
+    same status and headers but no body, so clients can check that the
+    file exists (404 when it is missing) before showing it. Non-PDF responses are
     sandboxed, so a browser will not run scripts from them. PDFs are not:
     browsers' built-in PDF viewers refuse sandboxed documents, and uploads
     are verified as genuine PDFs (the viewers run isolated anyway).

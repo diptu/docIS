@@ -20,23 +20,49 @@ it("explains a scheduled retry with the last error", () => {
     status: "queued",
     attempts: 1,
     retry_scheduled: true,
-    error: "TimeoutError: worker lost",
+    error: "Couldn't reach the AI service. We'll try again automatically.",
     next_run_at: null,
   });
 
   expect(screen.getByText("Retry scheduled")).toBeInTheDocument();
-  expect(screen.getByText("TimeoutError: worker lost")).toBeInTheDocument();
+  expect(
+    screen.getByText("Last attempt failed: Couldn't reach the AI service. We'll try again automatically."),
+  ).toBeInTheDocument();
   expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
 });
 
 it("shows a final failure with its error and a retry button", async () => {
   const onRetry = vi.fn();
-  panel({ kind: "extract_invoice", status: "failed", attempts: 3, error: "LLMError: credit balance too low" }, onRetry);
+  panel(
+    {
+      kind: "extract_invoice",
+      status: "failed",
+      attempts: 3,
+      error: "The AI service is temporarily unavailable. Click Retry to try again.",
+    },
+    onRetry,
+  );
 
-  expect(screen.getByRole("alert")).toHaveTextContent("Extract invoice failed after 3 of 3 attempts");
-  expect(screen.getByText("LLMError: credit balance too low")).toBeInTheDocument();
+  expect(screen.getByRole("alert")).toHaveTextContent("Extract invoice failed after 3 attempts");
+  expect(
+    screen.getByText("The AI service is temporarily unavailable. Click Retry to try again."),
+  ).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Retry" }));
   expect(onRetry).toHaveBeenCalledOnce();
+});
+
+it("doesn't count attempts when it stopped at the first (retrying can't help)", () => {
+  panel({
+    kind: "extract_invoice",
+    status: "failed",
+    attempts: 1,
+    error: "Invoice extraction is unavailable right now: the AI service account has run out of credits.",
+  });
+
+  const alert = screen.getByRole("alert");
+  expect(alert).toHaveTextContent(/^Extract invoice failed\s*Retry/);
+  expect(alert).not.toHaveTextContent("of 3");
+  expect(alert).toHaveTextContent("run out of credits");
 });
 
 it("renders nothing once processing succeeded", () => {

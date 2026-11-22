@@ -2,8 +2,20 @@
 Application exceptions mapped to HTTP error responses.
 """
 
+import logging
+
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import DBAPIError
+
+logger = logging.getLogger(__name__)
+
+# Shown to end users: plain language, no internals. The technical cause is
+# logged by the handlers below.
+DATABASE_UNAVAILABLE = (
+    "The service is temporarily unavailable. Please try again in a moment."
+)
+INTERNAL_ERROR = "Something went wrong on our side. Please try again."
 
 
 class AppError(Exception):
@@ -32,6 +44,15 @@ class ServiceUnavailableError(AppError):
     """A feature is disabled or its backing service is unavailable."""
 
     status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+
+
+class DatabaseUnavailableError(ServiceUnavailableError):
+    """PostgreSQL cannot be reached (down, starting up or refusing logins)."""
+
+    retry_after_seconds = 5
+
+    def __init__(self, message: str = DATABASE_UNAVAILABLE) -> None:
+        super().__init__(message)
 
 
 class UnsupportedFileTypeError(AppError):
@@ -64,11 +85,47 @@ class TooManyFilesError(AppError):
     status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
-async def _app_error_handler(_: Request, exc: Exception) -> JSONResponse:
+async def _app_error_handler(request: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, AppError)
-    return JSONResponse(status_code=exc.status_code, content={"detail": exc.message})
+    headers = None
+    if isinstance(exc, DatabaseUnavailableError):
+        logger.warning(
+            "Database unavailable on %s %s: %s",
+            request.method,
+            request.url.path,
+            exc.__cause__ or exc,
+        )
+        headers = {"Retry-After": str(exc.retry_after_seconds)}
+    return JSONResponse(
+        status_code=exc.status_code, content={"detail": exc.message}, headers=headers
+    )
+
+
+async def _database_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    """A connection lost mid-request (e.g. PostgreSQL restarted) is a 503;
+    any other database error is a bug, reported as a generic 500."""
+    assert isinstance(exc, DBAPIError)
+    if exc.connection_invalidated:
+        unavailable = DatabaseUnavailableError()
+        unavailable.__cause__ = exc
+        return await _app_error_handler(request, unavailable)
+    return await _unhandled_error_handler(request, exc)
+
+
+async def _unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Last resort: a JSON body (not Starlette's plain text) so clients can
+    show a message. Details stay in the server log."""
+    logger.error(
+        "Unhandled error on %s %s", request.method, request.url.path, exc_info=exc
+    )
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": INTERNAL_ERROR},
+    )
 
 
 def register_exception_handlers(app: FastAPI) -> None:
-    """Attach handlers that turn AppError subclasses into JSON responses."""
+    """Attach handlers that turn errors into JSON ``{"detail": ...}`` responses."""
     app.add_exception_handler(AppError, _app_error_handler)
+    app.add_exception_handler(DBAPIError, _database_error_handler)
+    app.add_exception_handler(Exception, _unhandled_error_handler)

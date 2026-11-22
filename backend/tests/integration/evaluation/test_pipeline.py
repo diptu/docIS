@@ -10,9 +10,16 @@ import pytest
 from app.extraction.validation import CheckStatus, validate_amounts
 from app.processing.ocr import OcrConfig
 from evaluation.__main__ import main
+from evaluation.evaluate_extraction import (
+    NoisyLLM,
+    OracleLLM,
+    load_dataset,
+    render_markdown,
+    run,
+    write_results,
+)
 from evaluation.generate import FORMATS, generate, make_invoice
-from evaluation.report import summarise, write_report
-from evaluation.runner import NoisyLLM, OracleLLM, load_dataset, run
+from evaluation.metrics import summarise
 from tests.support.helpers import requires_tesseract
 
 
@@ -25,16 +32,29 @@ def test_generated_invoices_add_up() -> None:
 
 
 def test_generation_is_deterministic(tmp_path: Path) -> None:
-    generate(tmp_path / "a", 4, seed=5)
-    generate(tmp_path / "b", 4, seed=5)
+    generate(tmp_path / "a" / "dataset", 4, seed=5)
+    generate(tmp_path / "b" / "dataset", 4, seed=5)
 
-    for label in (tmp_path / "a").glob("*.json"):
-        assert label.read_text() == (tmp_path / "b" / label.name).read_text()
+    for folder in ("dataset/ground_truth", "validation_expectations"):
+        labels = sorted((tmp_path / "a" / folder).glob("*.json"))
+        assert len(labels) == 4
+        for label in labels:
+            twin = tmp_path / "b" / folder / label.name
+            assert label.read_text() == twin.read_text()
+
+
+def test_cases_are_named_after_their_invoice_number(tmp_path: Path) -> None:
+    documents = generate(tmp_path / "dataset", 4, seed=5)
+
+    for case in load_dataset(tmp_path / "dataset"):
+        assert case.name == case.expected.invoice_number
+        assert case.path in documents
+        assert (tmp_path / "validation_expectations" / f"{case.name}.json").exists()
 
 
 @pytest.fixture(scope="module")
 def dataset(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    directory = tmp_path_factory.mktemp("dataset")
+    directory = tmp_path_factory.mktemp("evaluation") / "dataset"
     generate(directory, len(FORMATS), seed=11)  # one case per format
     return directory
 
@@ -47,7 +67,8 @@ def test_dataset_loads_with_labels(dataset: Path) -> None:
 
 
 def test_dataset_rejects_labels_without_one_document(tmp_path: Path) -> None:
-    (tmp_path / "orphan.json").write_text("{}")
+    (tmp_path / "ground_truth").mkdir()
+    (tmp_path / "ground_truth" / "orphan.json").write_text("{}")
 
     with pytest.raises(ValueError, match="exactly one document"):
         load_dataset(tmp_path)
@@ -61,17 +82,21 @@ async def test_oracle_scores_perfectly_on_every_format(
         load_dataset(dataset), OracleLLM(), OcrConfig(timeout_seconds=30)
     )
 
-    summary = write_report(results, tmp_path / "report", "oracle", str(dataset))
+    summary = write_results(results, tmp_path, "oracle", str(dataset))
 
     assert summary["errors"] == []
     assert summary["documents_exact"] == 100.0
     assert summary["fields"]["hallucination_rate"] == 0.0
     assert summary["line_items"]["f1"] == 100.0
     assert set(summary["by_format"]) == set(FORMATS)
-    report = (tmp_path / "report" / "report.md").read_text()
+    report = render_markdown(summary, "oracle", str(dataset))
     assert "| Documents fully correct (fields + line items) | 100.0% |" in report
-    cases = json.loads((tmp_path / "report" / "cases.json").read_text())
-    assert all(case["mistakes"] == [] for case in cases)
+    saved = json.loads((tmp_path / "extraction_results.json").read_text())
+    assert saved["model"] == "oracle" and saved["summary"] == summary
+    assert all(case["mistakes"] == [] for case in saved["cases"])
+    headline = json.loads((tmp_path / "evaluation_summary.json").read_text())
+    assert headline["extraction"]["documents_fully_correct"] == 100.0
+    assert headline["validation"] is None
 
 
 @requires_tesseract
@@ -123,8 +148,10 @@ async def test_model_and_content_errors_are_recorded(dataset: Path) -> None:
 
 
 def test_cli(dataset: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["generate", "--out", str(tmp_path / "gen"), "--count", "2"]) == 0
-    assert len(list((tmp_path / "gen").glob("*.json"))) == 2
+    gen = tmp_path / "gen" / "dataset"
+    assert main(["generate", "--dataset", str(gen), "--count", "2"]) == 0
+    assert len(list((gen / "ground_truth").glob("*.json"))) == 2
+    assert len(list((tmp_path / "gen" / "validation_expectations").iterdir())) == 2
 
     # Claude costs money: refuses without --yes.
     assert main(["run", "--dataset", str(dataset), "--llm", "claude"]) == 2
@@ -132,12 +159,12 @@ def test_cli(dataset: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
 
     assert main(["run", "--dataset", str(tmp_path / "empty"), "--llm", "oracle"]) == 1
 
-    out = tmp_path / "out"
+    out = tmp_path / "results"
     code = main(
         [
             "run",
             "--dataset",
-            str(tmp_path / "gen"),
+            str(gen),
             "--llm",
             "oracle",
             "--out",
@@ -145,7 +172,23 @@ def test_cli(dataset: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
         ]
     )
     assert code == 0
-    assert (out / "report.md").exists() and (out / "summary.json").exists()
+    assert "## Headline" in capsys.readouterr().out
+    # Expectations default to validation_expectations next to the dataset.
+    assert main(["validate", "--dataset", str(gen), "--out", str(out)]) == 0
+    assert "Detection rate: 100.0%" in capsys.readouterr().out
+    assert sorted(p.name for p in out.iterdir()) == [
+        "evaluation_report.html",
+        "evaluation_summary.json",
+        "extraction_results.json",
+        "validation_results.json",
+    ]
+    headline = json.loads((out / "evaluation_summary.json").read_text())
+    assert headline["extraction"] and headline["validation"]
+
+    empty = tmp_path / "no-expectations"
+    empty.mkdir()
+    args = ["validate", "--dataset", str(gen), "--expectations", str(empty)]
+    assert main([*args, "--out", str(tmp_path / "x")]) == 1
 
 
 def test_cli_fails_loudly_when_no_case_can_be_scored(
@@ -158,7 +201,7 @@ def test_cli_fails_loudly_when_no_case_can_be_scored(
             raise RuntimeError("No Claude credentials are configured.")
 
     monkeypatch.setattr(cli, "_llm", lambda name, noise: NoKey())
-    generate(tmp_path / "data", 2, seed=3)
+    generate(tmp_path / "data", 2, seed=3, expectations=tmp_path / "expectations")
 
     code = main(
         [
@@ -170,7 +213,7 @@ def test_cli_fails_loudly_when_no_case_can_be_scored(
             "--yes",
             # Never write test reports into the real evaluation/results.
             "--out",
-            str(tmp_path / "report"),
+            str(tmp_path / "results"),
         ]
     )
 
@@ -180,7 +223,7 @@ def test_cli_fails_loudly_when_no_case_can_be_scored(
 
 
 def _result(fmt: str, content: float, model: float, error: str | None = None) -> object:
-    from evaluation.runner import Case, CaseResult
+    from evaluation.evaluate_extraction import Case, CaseResult
     from tests.support.fakes import sample_invoice
 
     case = Case(f"case-{fmt}-{content}", Path("x"), fmt, "us", sample_invoice())
@@ -221,8 +264,8 @@ def test_report_shows_reliability_and_timing(dataset: Path, tmp_path: Path) -> N
     cases = load_dataset(dataset)
     results = asyncio.run(run(cases, OracleLLM(), OcrConfig()))
 
-    summary = write_report(results, tmp_path / "out", "oracle", str(dataset))
-    report = (tmp_path / "out" / "report.md").read_text()
+    summary = write_results(results, tmp_path, "oracle", str(dataset))
+    report = render_markdown(summary, "oracle", str(dataset))
 
     assert summary["reliability"]["success_rate"] == 100.0
     assert "| Document success rate (processed end to end) | 100.0% |" in report

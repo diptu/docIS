@@ -67,6 +67,37 @@
 
 
 
+5. Evaluation evaluation metrics
+
+| Metric | What it measures |
+| --- | --- |
+| **Field-level accuracy** | Percentage of extracted fields matching ground truth |
+| **Exact invoice accuracy** | Percentage of invoices where all required fields are correct |
+| **Numeric accuracy** | Accuracy of subtotal, tax, total, quantity and unit price |
+| **Date accuracy** | Correctly extracted and normalized dates |
+| **Line-item accuracy** | Correctly extracted descriptions, quantities and amounts |
+| **Validation precision** | Percentage of reported validation errors that are genuine |
+| **Validation recall** | Percentage of injected or known errors detected |
+| **Processing time** | Average time to process one document |
+| **Failure rate** | Percentage of documents that fail processing |
+
+### Useful Formulas
+
+$$
+\text{Field Accuracy} = \frac{\text{Correctly Extracted Fields}}{\text{Total Ground-Truth Fields}} \times 100
+$$
+
+$$
+\text{Exact Invoice Accuracy} = \frac{\text{Invoices with All Required Fields Correct}}{\text{Total Invoices}} \times 100
+$$
+
+$$
+\text{Validation Precision} = \frac{TP}{TP + FP}
+$$
+
+$$
+\text{Validation Recall} = \frac{TP}{TP + FN}
+$$
 
 
 

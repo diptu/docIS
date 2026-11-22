@@ -83,3 +83,4 @@ Refer to `backend/docs/` and the backend/frontend project configuration files fo
 ## Project Goal
 
 Make unstructured business documents easier to process and understand by combining document extraction, structured data validation, human review, and intelligent search in one platform.
+

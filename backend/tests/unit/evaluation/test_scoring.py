@@ -2,7 +2,7 @@ import datetime as dt
 
 import pytest
 
-from evaluation.scoring import (
+from evaluation.metrics import (
     CORRECT,
     CORRECT_NULL,
     HALLUCINATED,

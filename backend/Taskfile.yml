@@ -177,7 +177,7 @@ tasks:
   # ==========================================
 
   eval-generate:
-    desc: Generate the synthetic labelled invoice dataset
+    desc: Generate the synthetic labelled invoices and validation expectations
     cmds:
       - uv run python -m evaluation generate --count {{.COUNT | default 40}}
 
@@ -190,6 +190,38 @@ tasks:
     desc: Measure extraction accuracy with Claude (costs money; needs ANTHROPIC_API_KEY)
     cmds:
       - uv run python -m evaluation run --llm claude --yes {{.CLI_ARGS}}
+
+  eval-validate:
+    desc: Measure how well the amount checks catch inconsistent invoices (free)
+    cmds:
+      - uv run python -m evaluation validate
+
+  eval-report:
+    desc: Rebuild the HTML evaluation reports (synthetic and third-party)
+    cmds:
+      - uv run python -m evaluation report
+      - uv run python -m evaluation report --results evaluation/third_party_eval/results
+
+  # Third-party dataset in evaluation/third_party (converted to third_party_eval/)
+  eval-3p-convert:
+    desc: Convert evaluation/third_party into the evaluation layout
+    cmds:
+      - uv run python -m evaluation convert-third-party
+
+  eval-3p-validate:
+    desc: Amount-check evaluation on the third-party dataset (free)
+    cmds:
+      - uv run python -m evaluation validate --dataset evaluation/third_party_eval/dataset --out evaluation/third_party_eval/results
+
+  eval-3p-check:
+    desc: Harness check on the third-party dataset (oracle; free, expect ~100%)
+    cmds:
+      - uv run python -m evaluation run --llm oracle --dataset evaluation/third_party_eval/dataset --out evaluation/third_party_eval/results
+
+  eval-3p:
+    desc: Extraction accuracy on the third-party dataset with Claude (costs money)
+    cmds:
+      - uv run python -m evaluation run --llm claude --yes --dataset evaluation/third_party_eval/dataset --out evaluation/third_party_eval/results {{.CLI_ARGS}}
 
   # ==========================================
   # DATABASE

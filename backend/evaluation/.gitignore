@@ -1,2 +1,6 @@
 dataset/
+validation_expectations/
 results/
+# Third-party data: licence unknown, keep it out of git.
+third_party/
+third_party_eval/

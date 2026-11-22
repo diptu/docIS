@@ -402,3 +402,20 @@ async def test_missing_stored_file_is_404(client: AsyncClient, repository: Any) 
 
     assert response.status_code == 404
     assert "stored file" in response.json()["detail"]
+
+
+async def test_head_checks_the_file_without_sending_it(
+    client: AsyncClient, repository: Any, stored: Any
+) -> None:
+    """The viewer asks first, so a missing file can say "No file found"."""
+    repository.get.return_value = stored("application/pdf", "inv.pdf", b"%PDF-1.7")
+    url = f"/documents/{repository.get.return_value.id}/file"
+
+    present = await client.head(url)
+
+    assert present.status_code == 200
+    assert present.content == b""
+    assert present.headers["content-length"] == "8"
+
+    repository.get.return_value = build_document()  # no file on disk
+    assert (await client.head(url)).status_code == 404

@@ -1,26 +1,40 @@
 """
 Command line: generate a dataset, or run an evaluation.
 
-    uv run python -m evaluation generate --out evaluation/dataset --count 40
+    uv run python -m evaluation generate --count 40
     uv run python -m evaluation run --llm oracle      # harness check, free
     uv run python -m evaluation run --llm claude --yes  # real, costs money
+    uv run python -m evaluation validate              # amount checks, free
+
+Results go to evaluation/results/: extraction_results.json,
+validation_results.json and evaluation_summary.json (both, in brief).
 """
 
 import argparse
 import asyncio
-import datetime as dt
 import sys
 from pathlib import Path
 
 from app.core.config import get_settings
 from app.extraction.llm import ClaudeInvoiceLLM, InvoiceLLM
 from app.processing.ocr import OcrConfig
+from evaluation import evaluate_validation
+from evaluation.evaluate_extraction import (
+    NoisyLLM,
+    OracleLLM,
+    load_dataset,
+    render_markdown,
+    run,
+    write_results,
+)
 from evaluation.generate import generate
-from evaluation.report import write_report
-from evaluation.runner import NoisyLLM, OracleLLM, load_dataset, run
-
-DEFAULT_DATASET = Path(__file__).parent / "dataset"
-DEFAULT_RESULTS = Path(__file__).parent / "results"
+from evaluation.reporting import (
+    DATASET_DIR,
+    EVALUATION_REPORT,
+    EVALUATION_SUMMARY,
+    EXPECTATIONS_DIR,
+    RESULTS_DIR,
+)
 
 
 def _llm(name: str, noise: float) -> InvoiceLLM:
@@ -42,13 +56,24 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
 
     gen = commands.add_parser("generate", help="write synthetic labelled invoices")
-    gen.add_argument("--out", type=Path, default=DEFAULT_DATASET)
+    gen.add_argument("--dataset", type=Path, default=DATASET_DIR)
+    gen.add_argument("--expectations", type=Path, default=None)
     gen.add_argument("--count", type=int, default=40)
     gen.add_argument("--seed", type=int, default=2026)
 
+    conv = commands.add_parser(
+        "convert-third-party",
+        help="convert evaluation/third_party to the harness layout",
+    )
+    conv.add_argument("--source", type=Path, default=None)
+    conv.add_argument("--out", type=Path, default=None)
+
+    rep = commands.add_parser("report", help="rebuild the HTML report from results")
+    rep.add_argument("--results", type=Path, default=RESULTS_DIR)
+
     ev = commands.add_parser("run", help="measure extraction accuracy")
-    ev.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
-    ev.add_argument("--out", type=Path, default=None, help="report directory")
+    ev.add_argument("--dataset", type=Path, default=DATASET_DIR)
+    ev.add_argument("--out", type=Path, default=RESULTS_DIR, help="results folder")
     ev.add_argument("--llm", choices=["claude", "oracle", "noisy"], default="claude")
     ev.add_argument(
         "--noise", type=float, default=0.2, help="error rate for --llm noisy"
@@ -58,11 +83,38 @@ def main(argv: list[str] | None = None) -> int:
         "--yes", action="store_true", help="confirm spending money (claude)"
     )
 
+    val = commands.add_parser("validate", help="measure the amount checks")
+    val.add_argument("--dataset", type=Path, default=DATASET_DIR)
+    val.add_argument("--expectations", type=Path, default=None)
+    val.add_argument("--out", type=Path, default=RESULTS_DIR, help="results folder")
+
     args = parser.parse_args(argv)
     if args.command == "generate":
-        paths = generate(args.out, args.count, args.seed)
-        print(f"Wrote {len(paths)} labelled cases to {args.out}")
+        paths = generate(args.dataset, args.count, args.seed, args.expectations)
+        print(f"Wrote {len(paths)} labelled cases to {args.dataset}")
         return 0
+
+    if args.command == "report":
+        from evaluation.html_report import write_report
+
+        print(f"Report: {write_report(args.results)}")
+        return 0
+
+    if args.command == "convert-third-party":
+        from evaluation.convert_third_party import OUT_DIR, SOURCE_DIR, convert
+
+        out = args.out or OUT_DIR
+        count = convert(args.source or SOURCE_DIR, out)
+        print(f"Converted {count} cases to {out}")
+        return 0
+
+    if args.command == "validate":
+        expectations = args.expectations or (
+            EXPECTATIONS_DIR
+            if args.dataset == DATASET_DIR
+            else args.dataset.parent / "validation_expectations"
+        )
+        return _validate(args.dataset, expectations, args.out)
 
     cases = load_dataset(args.dataset)[: args.limit]
     if not cases:
@@ -75,21 +127,22 @@ def main(argv: list[str] | None = None) -> int:
             "money (roughly a few cents per invoice). Re-run with --yes to proceed.",
         )
         return 2
-    out = args.out or DEFAULT_RESULTS / f"{dt.datetime.now():%Y%m%d-%H%M%S}-{args.llm}"
+    out = args.out
     settings = get_settings()
     config = OcrConfig(
         languages=settings.ocr_languages, timeout_seconds=settings.ocr_timeout_seconds
     )
     print(f"Evaluating {len(cases)} cases with {args.llm}…")
     results = asyncio.run(run(cases, _llm(args.llm, args.noise), config))
-    summary = write_report(results, out, args.llm, str(args.dataset))
+    summary = write_results(results, out, args.llm, str(args.dataset))
+    print("\n" + render_markdown(summary, args.llm, str(args.dataset)))
     errors = summary["errors"]
     if errors:
         print(
             f"\n{len(errors)} of {len(cases)} cases failed, e.g. {errors[0]['error']}"
         )
     if len(errors) == len(cases):
-        print(f"No case could be scored. Details: {out / 'report.md'}")
+        print(f"No case could be scored. Details: {out}")
         return 3
     reliability = summary["reliability"]
     print(
@@ -99,8 +152,37 @@ def main(argv: list[str] | None = None) -> int:
         f"Documents fully correct: {summary['documents_exact']}% · "
         f"field accuracy: {summary['fields']['accuracy']}% · "
         f"hallucination rate: {summary['fields']['hallucination_rate']}%\n"
-        f"Report: {out / 'report.md'}"
+        f"Results: {out} (summary: {EVALUATION_SUMMARY}, report: {EVALUATION_REPORT})"
     )
+    return 0
+
+
+def _validate(dataset: Path, expectations: Path, out: Path) -> int:
+    cases = load_dataset(dataset)
+    if not cases:
+        print(f"No cases in {dataset}; run `python -m evaluation generate` first.")
+        return 1
+    result = evaluate_validation.run(
+        cases, evaluate_validation.load_expectations(expectations)
+    )
+    summary = evaluate_validation.write_results(
+        result, out, str(dataset), str(expectations)
+    )
+    if not summary["invoices"]:
+        print(f"No validation expectations in {expectations} match the dataset.")
+        return 1
+    print(
+        f"Validation over {summary['invoices']} invoices and "
+        f"{summary['injected_errors']} injected errors:\n"
+        f"Detection rate: {summary['detection_rate']}% · "
+        f"false-alarm rate: {summary['false_alarm_rate']}% · "
+        f"scenarios fully correct: {summary['scenarios_correct']}%"
+    )
+    for name, group in summary["by_injected_error"].items():
+        print(f"  {name}: {group['detected']}/{group['applied']} detected")
+    if missing := summary["invoices_without_expectations"]:
+        print(f"Skipped (no expectations): {', '.join(missing)}")
+    print(f"Results: {out}")
     return 0
 
 

@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { LoadError } from "./LoadError";
 
 import { useDocumentStats } from "../api/hooks";
 import { formatDuration } from "../lib/format";
@@ -90,8 +91,14 @@ export function StatsCards() {
 
   if (stats.isError)
     return (
-      <p role="alert" className="text-sm text-red-700">
-        Could not load statistics: {stats.error.message}
+      <p className="text-sm">
+        <LoadError
+          what="the statistics"
+          error={stats.error}
+          onRetry={() => void stats.refetch()}
+          retrying={stats.isFetching}
+          brief
+        />
       </p>
     );
 

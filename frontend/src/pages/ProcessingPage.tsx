@@ -221,7 +221,7 @@ function JobRow({
         {job.error ? (
           <p
             title={job.error}
-            className={`line-clamp-2 break-words font-mono text-xs ${
+            className={`line-clamp-2 break-words text-xs ${
               job.status === "failed" ? "text-red-700" : "text-amber-800"
             }`}
           >

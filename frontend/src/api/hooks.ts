@@ -124,6 +124,11 @@ export function useDocument(id: string) {
   return useQuery({ queryKey: ["document", id], queryFn: () => api.getDocument(id) });
 }
 
+/** Whether the document's original file is still stored. */
+export function useFileExists(id: string) {
+  return useQuery({ queryKey: ["document", id, "file"], queryFn: () => api.fileExists(id) });
+}
+
 export function useProcessing(id: string) {
   const client = useQueryClient();
   return useQuery({

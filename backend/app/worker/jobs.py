@@ -16,6 +16,7 @@ import anyio
 from app.models.processing_job import JobKind
 from app.processing.processor import DocumentNotProcessableError
 from app.processing.progress import ProgressCallback, ProgressTracker
+from app.worker.errors import failure_message
 from app.worker.queue import ClaimedJob, utcnow
 from app.worker.retry import is_retryable, retry_delay
 from app.worker.runtime import Runtime
@@ -106,8 +107,11 @@ async def _finish(
         logger.info("Job %s succeeded", job.id)
         return JobOutcome("succeeded", follow_up=next_job)
 
+    # Full details go to the log; the job stores a message for users.
     message = f"{type(error).__name__}: {error}"
-    if is_retryable(error) and not job.is_last_attempt:
+    will_retry = is_retryable(error) and not job.is_last_attempt
+    shown = failure_message(error, will_retry=will_retry)
+    if will_retry:
         delay = retry_delay(
             job.attempts,
             runtime.retry_base_seconds,
@@ -124,7 +128,7 @@ async def _finish(
             exc_info=error,
         )
         retry_at = utcnow() + timedelta(seconds=delay)
-        await runtime.queue.retry_later(job.id, message, progress, retry_at)
+        await runtime.queue.retry_later(job.id, shown, progress, retry_at)
         return JobOutcome("retrying", retry_in=delay)
 
     reason = "permanent error" if not is_retryable(error) else "attempts exhausted"
@@ -137,7 +141,7 @@ async def _finish(
         message,
         exc_info=error,
     )
-    await runtime.queue.fail(job.id, message, progress)
+    await runtime.queue.fail(job.id, shown, progress)
     return JobOutcome("failed")
 
 

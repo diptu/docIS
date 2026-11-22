@@ -255,7 +255,7 @@ async def test_failed_processing_reports_error(
 
     job = (await client.get(f"/documents/{document['id']}/processing")).json()
     assert job["status"] == "failed"
-    assert job["error"].startswith("FileNotFoundError")
+    assert job["error"].startswith("The original file is missing from storage")
     assert (await client.get(f"/documents/{document['id']}")).json()[
         "status"
     ] == "failed"

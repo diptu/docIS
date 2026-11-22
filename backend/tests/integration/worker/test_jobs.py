@@ -69,7 +69,8 @@ async def test_retryable_failure_schedules_a_retry(
     assert (job.status, job.attempts, job.error) == (
         JobStatus.QUEUED,
         1,
-        "RuntimeError: ocr crashed",
+        "Something went wrong while processing this document. "
+        "We'll try again automatically.",
     )
     assert job.next_run_at is not None
 

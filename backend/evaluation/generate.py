@@ -1,12 +1,10 @@
 """
 Synthetic labelled invoices for measuring extraction accuracy.
 
-Each case is a document plus ``<name>.json`` holding the ground truth
-(``InvoiceData``). Cases vary on purpose:
 
 * locale: US, UK or German labels, date formats and number formats;
-* format: digital PDF, scanned PDF (rasterised, noisy, slightly rotated, so
-  it goes through OCR), XLSX and CSV;
+* format: digital PDF, scanned PDF and scanned TIFF (rasterised, noisy,
+  slightly rotated, so they go through OCR), XLSX and CSV;
 * content: 1-6 line items, 1-3 tax rates, optional fields (PO number, due
   date, deposit/amount due, contact details) left out, so null handling is
   measured too.
@@ -18,7 +16,6 @@ matches the document. Generation is deterministic for a given seed.
 import csv
 import datetime as dt
 import io
-import json
 import random
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
@@ -31,9 +28,11 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 
 from app.extraction.schema import InvoiceData, InvoiceLineItem, Party
+from evaluation.evaluate_validation import expectation_for
+from evaluation.reporting import write_json
 
 CENT = Decimal("0.01")
-FORMATS = ("pdf", "scan", "xlsx", "csv")
+FORMATS = ("pdf", "scan", "tiff", "xlsx", "csv")
 
 VENDORS = [
     ("ACME GmbH", "Hauptstraße 12, 10115 Berlin, Germany", "DE123456789"),
@@ -324,7 +323,9 @@ def render_pdf(data: InvoiceData, locale: Locale) -> bytes:
     return buffer.getvalue()
 
 
-def render_scan(data: InvoiceData, locale: Locale, rng: random.Random) -> bytes:
+def _scan_pages(
+    data: InvoiceData, locale: Locale, rng: random.Random
+) -> list[Image.Image]:
     """Rasterise the PDF like a scanner would: grey, noisy, slightly tilted."""
     document = pdfium.PdfDocument(render_pdf(data, locale))
     pages = []
@@ -335,10 +336,32 @@ def render_scan(data: InvoiceData, locale: Locale, rng: random.Random) -> bytes:
         )
         noise = Image.effect_noise(image.size, 18).convert("L")
         image = Image.blend(image, noise, 0.08).filter(ImageFilter.GaussianBlur(0.4))
-        pages.append(image.convert("RGB"))
+        pages.append(image)
+    return pages
+
+
+def render_scan(data: InvoiceData, locale: Locale, rng: random.Random) -> bytes:
+    """A scanned PDF: image-only pages, no text layer."""
+    pages = [page.convert("RGB") for page in _scan_pages(data, locale, rng)]
     buffer = io.BytesIO()
     pages[0].save(
         buffer, format="PDF", save_all=True, append_images=pages[1:], resolution=200
+    )
+    return buffer.getvalue()
+
+
+def render_tiff(data: InvoiceData, locale: Locale, rng: random.Random) -> bytes:
+    """A scanned TIFF, as fax and document scanners produce: greyscale,
+    LZW-compressed, one frame per page."""
+    pages = _scan_pages(data, locale, rng)
+    buffer = io.BytesIO()
+    pages[0].save(
+        buffer,
+        format="TIFF",
+        save_all=True,
+        append_images=pages[1:],
+        compression="tiff_lzw",
+        dpi=(200, 200),
     )
     return buffer.getvalue()
 
@@ -363,35 +386,51 @@ def render_csv(data: InvoiceData, locale: Locale) -> bytes:
     return buffer.getvalue().encode("utf-8")
 
 
-EXTENSIONS = {"pdf": ".pdf", "scan": ".pdf", "xlsx": ".xlsx", "csv": ".csv"}
+EXTENSIONS = {
+    "pdf": ".pdf",
+    "scan": ".pdf",
+    "tiff": ".tiff",
+    "xlsx": ".xlsx",
+    "csv": ".csv",
+}
 
 
-def generate(out: Path, count: int, seed: int = 2026) -> list[Path]:
-    """Write ``count`` cases to ``out`` (formats rotate evenly)."""
+def generate(
+    dataset: Path, count: int, seed: int = 2026, expectations: Path | None = None
+) -> list[Path]:
+    """Write ``count`` cases, each named after its invoice number, to
+    ``dataset/documents`` and ``dataset/ground_truth``, plus validation
+    expectations to ``expectations`` (default: ``validation_expectations``
+    next to the dataset). Formats rotate evenly. Returns the document paths."""
     rng = random.Random(seed)
-    out.mkdir(parents=True, exist_ok=True)
+    documents, labels = dataset / "documents", dataset / "ground_truth"
+    expectations = expectations or dataset.parent / "validation_expectations"
+    for directory in (documents, labels, expectations):
+        directory.mkdir(parents=True, exist_ok=True)
     written = []
     for number in range(1, count + 1):
         data, locale = make_invoice(rng, number)
         kind = FORMATS[(number - 1) % len(FORMATS)]
-        name = f"{number:03d}-{kind}-{locale.code}"
+        assert data.invoice_number is not None
+        name = data.invoice_number
         if kind == "pdf":
             content = render_pdf(data, locale)
         elif kind == "scan":
             content = render_scan(data, locale, rng)
+        elif kind == "tiff":
+            content = render_tiff(data, locale, rng)
         elif kind == "xlsx":
             content = render_xlsx(data, locale)
         else:
             content = render_csv(data, locale)
-        path = out / f"{name}{EXTENSIONS[kind]}"
+        path = documents / f"{name}{EXTENSIONS[kind]}"
         path.write_bytes(content)
         label = {
             "format": kind,
             "locale": locale.code,
             "expected": data.model_dump(mode="json"),
         }
-        (out / f"{name}.json").write_text(
-            json.dumps(label, indent=2, ensure_ascii=False)
-        )
+        write_json(labels / f"{name}.json", label)
+        write_json(expectations / f"{name}.json", expectation_for(data).to_json())
         written.append(path)
     return written

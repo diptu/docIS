@@ -31,7 +31,7 @@ async def test_a_failure_and_its_retry_are_tracked_end_to_end(
     failed = (await client.get("/processing/jobs", params={"status": "failed"})).json()
     (job,) = failed["items"]
     assert (job["document_id"], job["is_latest"]) == (document_id, True)
-    assert job["error"].startswith("FileNotFoundError")
+    assert job["error"].startswith("The original file is missing from storage")
     listed = (await client.get("/documents")).json()["items"][0]["processing"]
     assert (listed["status"], listed["error"]) == ("failed", job["error"])
 

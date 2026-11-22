@@ -6,6 +6,7 @@ import type { DocumentDeleteResult, DocumentListItem } from "../api/types";
 import { Badge, STATUS_TONE } from "../components/Badge";
 import { StatsCards } from "../components/StatsCards";
 import { jobStep, ProgressBar } from "../components/JobProgress";
+import { LoadError } from "../components/LoadError";
 import { UploadButton } from "../components/UploadButton";
 import { FILE_TYPE_LABELS, formatDateTime, formatMoney, humanize } from "../lib/format";
 
@@ -192,8 +193,13 @@ export function DocumentsPage() {
             )}
             {documents.isError && (
               <tr>
-                <td colSpan={7} role="alert" className="px-4 py-6 text-center text-red-700">
-                  Could not load documents: {documents.error.message}
+                <td colSpan={7} className="px-4 py-6 text-center">
+                  <LoadError
+                    what="your documents"
+                    error={documents.error}
+                    onRetry={() => void documents.refetch()}
+                    retrying={documents.isFetching}
+                  />
                 </td>
               </tr>
             )}

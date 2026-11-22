@@ -85,19 +85,70 @@ it("filters by review state", async () => {
   );
 });
 
+/** The full text of every alert on the page, once they have appeared. */
+const alertTexts = () => screen.queryAllByRole("alert").map((alert) => alert.textContent);
+
 it("shows load errors", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
-    new Response(JSON.stringify({ detail: "Database unavailable" }), { status: 503 }),
+    new Response(JSON.stringify({ detail: "Your session has expired." }), { status: 401 }),
   );
 
   renderPage();
 
-  expect(
-    await screen.findByText("Could not load documents: Database unavailable"),
-  ).toBeInTheDocument();
-  expect(
-    await screen.findByText("Could not load statistics: Database unavailable"),
-  ).toBeInTheDocument();
+  await vi.waitFor(() =>
+    expect(alertTexts()).toEqual(
+      expect.arrayContaining([
+        "We couldn't load the statistics. Your session has expired. Try again",
+        "We couldn't load your documents. Your session has expired. Try again",
+      ]),
+    ),
+  );
+});
+
+it("explains a temporary outage once, in plain language", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+    new Response(
+      JSON.stringify({
+        detail: "The service is temporarily unavailable. Please try again in a moment.",
+      }),
+      { status: 503 },
+    ),
+  );
+
+  renderPage();
+
+  // The stats card doesn't repeat the explanation the table gives.
+  await vi.waitFor(() =>
+    expect(alertTexts()).toEqual(
+      expect.arrayContaining([
+        "We couldn't load the statistics. Try again",
+        "We couldn't load your documents. The service is temporarily unavailable. Please try again in a moment. Try again",
+      ]),
+    ),
+  );
+});
+
+it("loads documents again on Try again once the server is back", async () => {
+  const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+    new Response(JSON.stringify({ detail: "Unavailable." }), { status: 503 }),
+  );
+  renderPage();
+  await vi.waitFor(() =>
+    expect(alertTexts().some((t) => t?.startsWith("We couldn't load your documents"))).toBe(true),
+  );
+  const row = screen
+    .getAllByRole("alert")
+    .find((alert) => alert.textContent?.startsWith("We couldn't load your documents"))!;
+
+  fetch.mockImplementation(async (input) =>
+    String(input).startsWith("/api/documents?")
+      ? new Response(JSON.stringify({ items: [], total: 0, offset: 0, limit: 25 }))
+      : new Response(JSON.stringify({ detail: "Unavailable." }), { status: 503 }),
+  );
+  await userEvent.click(within(row).getByRole("button", { name: "Try again" }));
+
+  expect(await screen.findByText(/No documents yet/)).toBeInTheDocument();
+  expect(alertTexts().some((t) => t?.includes("your documents"))).toBe(false);
 });
 
 it("shows the KPI cards", async () => {

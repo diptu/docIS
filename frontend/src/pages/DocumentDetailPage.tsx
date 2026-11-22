@@ -6,6 +6,7 @@ import {
   useCorrectInvoice,
   useDeleteDocuments,
   useDocument,
+  useFileExists,
   useInvoice,
   useProcessing,
   useRetry,
@@ -25,6 +26,7 @@ type Tab = "invoice" | "review" | "text" | "processing" | "history";
 export function DocumentDetailPage() {
   const { id = "" } = useParams();
   const document = useDocument(id);
+  const fileExists = useFileExists(id);
   const processing = useProcessing(id);
   const invoice = useInvoice(id);
   const correct = useCorrectInvoice(id);
@@ -81,12 +83,21 @@ export function DocumentDetailPage() {
         </div>
         <div className="flex items-center gap-2">
           <Badge tone={STATUS_TONE[doc.status]}>{humanize(doc.status)}</Badge>
-          <a
-            href={api.fileUrl(doc.id, true)}
-            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
-          >
-            Download original
-          </a>
+          {fileExists.data === false ? (
+            <span
+              title="The original file is no longer in storage."
+              className="cursor-not-allowed rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm text-slate-400"
+            >
+              No file found
+            </span>
+          ) : (
+            <a
+              href={api.fileUrl(doc.id, true)}
+              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
+            >
+              Download original
+            </a>
+          )}
           <button
             type="button"
             onClick={deleteDocument}

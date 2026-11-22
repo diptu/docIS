@@ -42,7 +42,7 @@ export function ProcessingPanel({
         )}
         {job.retry_scheduled && job.error && (
           <p className="break-words text-xs">
-            Last attempt failed: <span className="font-mono">{job.error}</span>
+            Last attempt failed: {job.error}
             {job.next_run_at && <> — next try {formatDateTime(job.next_run_at)}</>}
           </p>
         )}
@@ -58,7 +58,8 @@ export function ProcessingPanel({
       >
         <div className="flex flex-wrap items-center gap-3">
           <span className="font-medium">
-            {humanize(job.kind)} failed after {job.attempts} of {job.max_attempts} attempts
+            {humanize(job.kind)} failed
+            {job.attempts > 1 && ` after ${job.attempts} attempts`}
           </span>
           <button
             type="button"
@@ -69,7 +70,7 @@ export function ProcessingPanel({
             {retrying ? "Retrying…" : "Retry"}
           </button>
         </div>
-        {job.error && <p className="break-words font-mono text-xs">{job.error}</p>}
+        {job.error && <p className="break-words">{job.error}</p>}
         {retryError && <p className="text-xs">Could not retry: {retryError}</p>}
       </section>
     );

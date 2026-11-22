@@ -65,7 +65,7 @@ export function JobHistory({ documentId }: { documentId: string }) {
           )}
           {job.error && (
             <p
-              className={`mt-2 break-words rounded px-2 py-1 font-mono text-xs ${
+              className={`mt-2 break-words rounded px-2 py-1 text-xs ${
                 isActive(job) ? "bg-amber-50 text-amber-900" : "bg-red-50 text-red-800"
               }`}
             >

@@ -1,13 +1,20 @@
 """Health endpoints, application lifespan, and app-wide HTTP behaviour."""
 
-from collections.abc import AsyncIterator
-from unittest.mock import AsyncMock
+from collections.abc import AsyncIterator, Callable
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy.exc import DBAPIError
 
-from app.core.exceptions import ConflictError, NotFoundError
-from app.db.session import get_db
+from app.core.exceptions import (
+    DATABASE_UNAVAILABLE,
+    INTERNAL_ERROR,
+    ConflictError,
+    DatabaseUnavailableError,
+    NotFoundError,
+)
+from app.db.session import _connect, get_db
 from app.main import app
 from tests.api.conftest import Overrides
 
@@ -38,20 +45,100 @@ async def test_database_health_runs_a_query(
     session.execute.assert_awaited_once()
 
 
-async def test_database_health_propagates_a_database_outage(
-    client: AsyncClient, overrides: Overrides
-) -> None:
-    """A failing database surfaces as a server error, not a healthy reply."""
+def _db_failing_with(
+    error: Exception,
+) -> Callable[[], AsyncIterator[AsyncMock]]:
     session = AsyncMock()
-    session.execute.side_effect = ConnectionRefusedError("db down")
+    session.execute.side_effect = error
 
     async def mock_db() -> AsyncIterator[AsyncMock]:
         yield session
 
-    overrides[get_db] = mock_db
+    return mock_db
 
-    with pytest.raises(ConnectionRefusedError):
-        await client.get("/health/database")
+
+async def test_an_unreachable_database_is_a_503_with_retry_after(
+    client: AsyncClient, overrides: Overrides
+) -> None:
+    """PostgreSQL down (e.g. right after a restart): a clear, retryable 503."""
+    overrides[get_db] = _db_failing_with(DatabaseUnavailableError())
+
+    response = await client.get("/health/database")
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": DATABASE_UNAVAILABLE}
+    assert response.headers["retry-after"] == "5"
+
+
+async def test_a_connection_lost_mid_request_is_a_503(
+    client: AsyncClient, overrides: Overrides
+) -> None:
+    lost = DBAPIError("SELECT 1", {}, OSError("reset"), connection_invalidated=True)
+    overrides[get_db] = _db_failing_with(lost)
+
+    response = await client.get("/health/database")
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": DATABASE_UNAVAILABLE}
+
+
+@pytest.mark.parametrize(
+    "error",
+    [RuntimeError("bug"), DBAPIError("SELECT 1", {}, ValueError("bad sql"))],
+)
+async def test_unexpected_errors_are_a_json_500(
+    overrides: Overrides, error: Exception
+) -> None:
+    """Not Starlette's plain-text page: clients get a detail to show, and
+    internals stay in the server log."""
+    overrides[get_db] = _db_failing_with(error)
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as http:
+        response = await http.get("/health/database")
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": INTERNAL_ERROR}
+
+
+def _dialect(connect: MagicMock) -> MagicMock:
+    dialect = MagicMock()
+    dialect.loaded_dbapi.connect = connect
+    dialect.loaded_dbapi.Error = type("DBAPIErrorBase", (Exception,), {})
+    return dialect
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        OSError("Connect call failed ('127.0.0.1', 5434)"),
+        ConnectionRefusedError("refused"),
+        TimeoutError("timed out"),
+    ],
+)
+def test_connect_failures_become_database_unavailable(failure: Exception) -> None:
+    dialect = _dialect(MagicMock(side_effect=failure))
+
+    with pytest.raises(DatabaseUnavailableError) as raised:
+        _connect(dialect, None, (), {"host": "localhost"})
+
+    assert raised.value.__cause__ is failure
+
+
+def test_postgres_refusing_the_connection_is_database_unavailable() -> None:
+    """E.g. "the database system is starting up" or a rejected password."""
+    dialect = _dialect(MagicMock())
+    dialect.loaded_dbapi.connect.side_effect = dialect.loaded_dbapi.Error("starting")
+
+    with pytest.raises(DatabaseUnavailableError):
+        _connect(dialect, None, (), {})
+
+
+def test_successful_connections_pass_through() -> None:
+    connection = object()
+    dialect = _dialect(MagicMock(return_value=connection))
+
+    assert _connect(dialect, None, ("a",), {"b": 1}) is connection
+    dialect.loaded_dbapi.connect.assert_called_once_with("a", b=1)
 
 
 async def test_lifespan_disposes_the_pool_on_shutdown(

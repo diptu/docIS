@@ -132,6 +132,7 @@ The variables you usually need to change:
 | `SEMANTIC_SEARCH_ENABLED` | `true` | Set to `false` to skip embeddings; keyword search still works. |
 | `INVOICE_EXTRACTION_ENABLED` | `true` | Set to `false` to run without an Anthropic key. Text extraction, OCR and search still work, but no invoice fields are extracted. |
 | `LLM_MODEL` / `LLM_EFFORT` | `claude-opus-5-5` / `medium` | The Claude model and effort level used for extraction. |
+| `LLM_CHUNK_CHARS` / `LLM_MAX_PARTS` / `LLM_PART_CONCURRENCY` | `50000` / `120` / `4` | Long documents are extracted in parts of about this many characters, split between pages and sheets, several at a time, then merged into one invoice. A document needing more than `LLM_MAX_PARTS` parts (about 6 million characters) fails, to cap cost. |
 | `RATE_LIMIT_PER_MINUTE` / `RATE_LIMIT_PROCESSING_PER_MINUTE` | `600` / `20` | Requests per minute per client IP, and the smaller limit for uploads and retries. `RATE_LIMIT_ENABLED=false` turns limiting off. |
 | `RATE_LIMIT_TRUSTED_PROXY_HOPS` | `0` | How many reverse proxies in front of the API add to `X-Forwarded-For`. Leave at `0` when clients connect directly. Behind proxies, set it to the number of proxies, or every user will share one limit. |
 

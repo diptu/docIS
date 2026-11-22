@@ -1,7 +1,8 @@
 """
 Running invoice extraction for a document and storing the result.
 
-Pipeline: render text -> Claude (structured output) -> normalise -> validate
+Pipeline: render text -> Claude (structured output; long documents in
+parts, merged, see ``chunked``) -> normalise -> validate
 amounts -> find duplicates -> validation errors -> save invoice, line items
 and errors in one transaction.
 """
@@ -12,7 +13,8 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.extraction.document_text import render_document
+from app.extraction.chunked import DEFAULT_CHUNKING, ChunkingConfig, extract_document
+from app.extraction.document_text import Section, document_sections
 from app.extraction.llm import InvoiceLLM
 from app.extraction.normalize import invoice_number_key, normalize_invoice, vendor_key
 from app.extraction.records import invoice_from_data
@@ -31,7 +33,7 @@ def _decimal(value: float | None) -> Decimal | None:
 class _Source:
     """What extraction needs from the stored document."""
 
-    text: str
+    sections: list[Section]
     sha256: str | None
     ocr_confidences: list[tuple[int, float]]
 
@@ -43,13 +45,13 @@ class InvoiceExtractor:
         self,
         session_factory: async_sessionmaker[AsyncSession],
         llm: InvoiceLLM,
-        max_input_chars: int = 600_000,
+        chunking: ChunkingConfig = DEFAULT_CHUNKING,
         tolerance: Decimal = DEFAULT_TOLERANCE,
         min_ocr_confidence: float = 80.0,
     ) -> None:
         self.session_factory = session_factory
         self.llm = llm
-        self.max_input_chars = max_input_chars
+        self.chunking = chunking
         self.tolerance = tolerance
         self.min_ocr_confidence = min_ocr_confidence
 
@@ -60,13 +62,11 @@ class InvoiceExtractor:
             if document is None:
                 raise DocumentNotProcessableError(f"Document {document_id} not found.")
             pages = await repository.list_pages(document_id)
-            text = render_document(
-                pages,
-                await repository.list_sheets(document_id),
-                self.max_input_chars,
+            sections = document_sections(
+                pages, await repository.list_sheets(document_id)
             )
             return _Source(
-                text=text,
+                sections=sections,
                 sha256=document.sha256,
                 ocr_confidences=[
                     (page.page_number, page.ocr_confidence)
@@ -85,9 +85,12 @@ class InvoiceExtractor:
         """
         source = await self._load(document_id)
 
-        progress(Stage.EXTRACTING_INVOICE, 0, 1)
-        result = await self.llm.extract(source.text)
-        progress(Stage.EXTRACTING_INVOICE, 1, 1)
+        result = await extract_document(
+            self.llm,
+            source.sections,
+            self.chunking,
+            lambda done, total: progress(Stage.EXTRACTING_INVOICE, done, total),
+        )
 
         progress(Stage.SAVING, 0, 1)
         data = normalize_invoice(result.data)

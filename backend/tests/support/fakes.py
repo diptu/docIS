@@ -97,11 +97,13 @@ class FakeInvoiceLLM:
         self.data = data or sample_invoice()
         self.error = error
         self.texts: list[str] = []
+        self.parts: list[Any] = []
 
-    async def extract(self, document_text: str) -> "LLMExtraction":
+    async def extract(self, document_text: str, part: Any = None) -> "LLMExtraction":
         from app.extraction.llm import LLMExtraction
 
         self.texts.append(document_text)
+        self.parts.append(part)
         if self.error is not None:
             raise self.error
         return LLMExtraction(

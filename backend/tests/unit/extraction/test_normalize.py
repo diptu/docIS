@@ -256,3 +256,12 @@ def test_unsigned_unit_prices_stay_positive() -> None:
     (item,) = normalize_invoice(credit).line_items
 
     assert (item.quantity, item.unit_price, item.amount) == (2, 40, 80)
+
+
+def test_line_items_without_any_value_are_dropped() -> None:
+    blank = line(description="  ", quantity=None, unit_price=None, amount=None)
+    kept = line(description=None, quantity=None, unit_price=None, amount=12.5)
+
+    normalised = normalize_invoice(sample_invoice(line_items=[blank, kept]))
+
+    assert normalised.line_items == [kept]

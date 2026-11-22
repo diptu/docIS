@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.core.config import get_settings
+from app.extraction.chunked import ChunkingConfig
 from app.extraction.llm import ClaudeInvoiceLLM
 from app.extraction.service import InvoiceExtractor
 from app.processing.ocr import OcrConfig
@@ -56,7 +57,11 @@ def get_runtime() -> Runtime:
                 max_tokens=settings.llm_max_tokens,
                 timeout_seconds=settings.llm_timeout_seconds,
             ),
-            max_input_chars=settings.llm_max_input_chars,
+            chunking=ChunkingConfig(
+                chunk_chars=settings.llm_chunk_chars,
+                max_parts=settings.llm_max_parts,
+                concurrency=settings.llm_part_concurrency,
+            ),
             tolerance=Decimal(str(settings.validation_tolerance)),
             min_ocr_confidence=settings.review_min_ocr_confidence,
         )

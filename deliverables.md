@@ -311,6 +311,33 @@ The prompt tells the model to copy values exactly as printed and to return `null
 - **Enforcement:** normalisation applies the convention even when the model returns a credit note's amounts negative, keeping each line's quantity × unit price consistent with its amount.
 - **Duplicates:** matching only compares documents of the same type, so a credit note that reverses an invoice is not flagged as its duplicate.
 
+**Long documents**
+
+A document that fits one request (about 50,000 characters, roughly 30–50 pages) is extracted in one call. A longer one is handled in `app/extraction/chunked.py`:
+- **Splitting:** it is split into parts between pages and sheets. A page is cut inside only when it alone is too long. A long sheet repeats its heading row in every part.
+- **Extraction:** parts are extracted four at a time, each told which part it is ("Part 2 of 7 of one document", outside the document tags).
+- **Merging into one invoice:**
+  - The document type comes from the first part that is a billing document.
+  - Header fields and parties come from the first part that states them. Values that differ between parts are flagged as uncertain for review.
+  - Line items from every part are kept in document order.
+  - Totals come from the last part that states them.
+  - Each part follows the credit-note sign convention before merging.
+- **Overflow:** a part whose answer hits the output-token limit is halved and retried, up to three times.
+- **Failure:** if any other part fails, the rest are cancelled and the job retries as a whole.
+- **Cost guard:** a document needing more than 120 parts fails.
+- **Evaluation:** the evaluation uses the same code path. `--chunk-chars` forces splitting on short documents for testing.
+
+Measured with Claude on the 10 multi-page invoices (2–8 pages):
+
+| Run | Invoices fully correct | Median time per invoice | Cost |
+|---|---|---|---|
+| One request per invoice (current code) | 10 of 10 | 34.6 s | $1.14 |
+| One page per part (2–8 parts per invoice, merged) | 7 of 7 completed are exact; 3 not run (API credit ran out) | 11.6 s | $0.66 for 7 |
+| Parts of 1,200 characters (pages cut mid-table) | 5 of 10 | — | $1.48 |
+
+- **Whole pages merge correctly:** splitting at page boundaries reproduced the single-request result on every invoice that ran, and was about 3× faster because parts run in parallel.
+- **Cutting inside a page is the weak case:** cuts in the middle of a page separated four line amounts from their rows. The production default only cuts inside a page longer than 50,000 characters.
+
 **6. Financial validation and duplicate detection**
 
 Deterministic checks using `Decimal` arithmetic:
@@ -472,7 +499,11 @@ This was measured after adding image clean-up. It checks OCR output only, with n
   - customer name (the third-party labels don't include it)
   - cross-document reconciliation
   - the synthetic dataset, which has only been run with the oracle harness check, not with Claude
-- **Long documents:** invoice extraction is a single LLM call capped at 600,000 characters (`LLM_MAX_INPUT_CHARS`). Longer documents are still text-extracted and searchable, but invoice extraction reports an error.
+- **Long documents:**
+  - **Size limit:** documents are split into parts, so there is no longer a single-call limit. The cap is now 120 parts of 50,000 characters (`LLM_MAX_PARTS`, about 6 million characters).
+  - **One invoice per document:** a file that bundles several separate invoices is merged into one. Conflicting header values are flagged for review rather than split into separate invoices.
+  - **Pages over 50,000 characters:** a page that long is cut by lines. In a PDF whose text puts each table cell on its own line, such a cut can separate a row's amount from its description. The part is then usually marked uncertain and goes to review.
+  - **Not yet measured:** the split path has not been tested on a genuinely long real document.
 
 ### Deliverable 8 — Recorded Application Walkthrough
 

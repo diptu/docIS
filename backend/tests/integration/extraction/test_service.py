@@ -319,3 +319,36 @@ async def test_resolving_and_reopening_an_error(session_factory: Factory) -> Non
         assert (resolved.resolved, resolved.resolved_at is not None) == (True, True)
         reopened = await repository.set_resolved(error, False)
         assert (reopened.resolved, reopened.resolved_at) == (False, None)
+
+
+# ---- long documents -----------------------------------------------------------
+
+
+async def test_long_document_is_extracted_in_parts_and_stored_once(
+    session_factory: Factory,
+) -> None:
+    """The extractor splits by its chunking config, asks per part, and stores
+    the merged invoice: header from the first part, every part's lines."""
+    from app.extraction.chunked import ChunkingConfig
+    from app.extraction.llm import Part
+
+    long_text = "\n".join(f"Line {n}: consulting hours " + "." * 40 for n in range(60))
+    document = await add_document(session_factory, text=long_text)
+    llm = FakeInvoiceLLM(sample_invoice())
+    progress: list[tuple[str, int, int | None]] = []
+    extractor = InvoiceExtractor(
+        session_factory, llm, chunking=ChunkingConfig(chunk_chars=1_500)
+    )
+
+    await extractor.extract(
+        document, lambda stage, done, total: progress.append((stage, done, total))
+    )
+
+    parts = len(llm.texts)
+    assert parts > 1
+    assert llm.parts == [Part(n, parts) for n in range(1, parts + 1)]
+    stored = await invoice_of(session_factory, document)
+    assert stored.invoice_number == "INV-2026-001"
+    # The fake answers every part with the same lines; all are kept, in order.
+    assert len(stored.line_items) == parts * len(sample_invoice().line_items)
+    assert ("extracting_invoice", parts, parts) in progress

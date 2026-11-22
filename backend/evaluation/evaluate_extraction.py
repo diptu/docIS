@@ -21,8 +21,9 @@ from typing import Any
 
 from anyio import to_thread
 
-from app.extraction.document_text import render_document
-from app.extraction.llm import InvoiceLLM, LLMExtraction
+from app.extraction.chunked import DEFAULT_CHUNKING, ChunkingConfig, extract_document
+from app.extraction.document_text import Section, document_sections
+from app.extraction.llm import InvoiceLLM, LLMExtraction, Part
 from app.extraction.normalize import normalize_invoice
 from app.extraction.schema import InvoiceData
 from app.extraction.validation import CheckStatus, validate_amounts
@@ -99,8 +100,17 @@ class OracleLLM:
     def __init__(self) -> None:
         self.answer: InvoiceData | None = None
 
-    async def extract(self, document_text: str) -> LLMExtraction:
+    async def extract(
+        self, document_text: str, part: Part | None = None
+    ) -> LLMExtraction:
         assert self.answer is not None
+        if part is not None and part.number > 1:
+            # The whole answer comes with the first part; later parts add
+            # nothing (merging ignores parts that are not billing documents).
+            empty = self.answer.model_copy(
+                update={"document_type": "other", "line_items": []}
+            )
+            return LLMExtraction(empty, "oracle", 0, 0, 0)
         return LLMExtraction(self.answer, "oracle", 0, 0, 0)
 
 
@@ -113,7 +123,9 @@ class NoisyLLM(OracleLLM):
         self.rate = rate
         self.rng = random.Random(seed)
 
-    async def extract(self, document_text: str) -> LLMExtraction:
+    async def extract(
+        self, document_text: str, part: Part | None = None
+    ) -> LLMExtraction:
         assert self.answer is not None
         data = self.answer.model_dump()
         for key in (
@@ -146,23 +158,30 @@ class CaseResult:
     predicted: dict[str, Any] | None = None
 
 
-def _as_rows(path: Path, media_type: str, config: OcrConfig, name: str) -> str:
+def _as_rows(
+    path: Path, media_type: str, config: OcrConfig, name: str
+) -> list[Section]:
     result = extract_content(path, media_type, config, name)
     pages = [DocumentPage(page_number=p.page_number, text=p.text) for p in result.pages]
     sheets = [
         DocumentSheet(sheet_number=s.sheet_number, name=s.name, rows=s.rows)
         for s in result.sheets
     ]
-    return render_document(pages, sheets, max_chars=600_000)
+    return document_sections(pages, sheets)
 
 
-async def run_case(case: Case, llm: InvoiceLLM, config: OcrConfig) -> CaseResult:
+async def run_case(
+    case: Case,
+    llm: InvoiceLLM,
+    config: OcrConfig,
+    chunking: ChunkingConfig = DEFAULT_CHUNKING,
+) -> CaseResult:
     file_type = type_for_file_name(case.path.name)
     if file_type is None:
         return CaseResult(case, None, "Unsupported file type", 0.0, 0.0)
     started = time.perf_counter()
     try:
-        text = await to_thread.run_sync(
+        sections = await to_thread.run_sync(
             _as_rows, case.path, file_type.media_type, config, case.path.name
         )
     except Exception as exc:
@@ -179,7 +198,8 @@ async def run_case(case: Case, llm: InvoiceLLM, config: OcrConfig) -> CaseResult
         llm.answer = case.expected
     started = time.perf_counter()
     try:
-        extraction = await llm.extract(text)
+        # The same path as the app: long documents are extracted in parts.
+        extraction = await extract_document(llm, sections, chunking)
     except Exception as exc:
         return CaseResult(
             case,
@@ -207,11 +227,14 @@ async def run_case(case: Case, llm: InvoiceLLM, config: OcrConfig) -> CaseResult
 
 
 async def run(
-    cases: list[Case], llm: InvoiceLLM, config: OcrConfig
+    cases: list[Case],
+    llm: InvoiceLLM,
+    config: OcrConfig,
+    chunking: ChunkingConfig = DEFAULT_CHUNKING,
 ) -> list[CaseResult]:
     results = []
     for index, case in enumerate(cases, start=1):
-        result = await run_case(case, llm, config)
+        result = await run_case(case, llm, config, chunking)
         status = (
             "error"
             if result.error

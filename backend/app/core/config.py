@@ -44,8 +44,13 @@ class Settings(BaseSettings):
     llm_effort: Literal["low", "medium", "high", "xhigh", "max"] = "medium"
     llm_max_tokens: int = Field(default=32000, gt=0)
     llm_timeout_seconds: float = Field(default=600.0, gt=0)
-    # Longer documents fail extraction instead of being silently truncated.
-    llm_max_input_chars: int = Field(default=600_000, gt=0)
+    # Long documents are extracted in parts of about this many characters
+    # (split at page/sheet boundaries) and merged; see app.extraction.chunked.
+    # Documents needing more than llm_max_parts parts fail (a cost guard);
+    # llm_part_concurrency parts are extracted at the same time.
+    llm_chunk_chars: int = Field(default=50_000, ge=1_000)
+    llm_max_parts: int = Field(default=120, gt=0)
+    llm_part_concurrency: int = Field(default=4, gt=0)
     # Validation and review: rounding allowance for amount checks (currency
     # units), and the OCR confidence below which a page is flagged.
     validation_tolerance: float = Field(default=0.01, ge=0)

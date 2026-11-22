@@ -115,7 +115,9 @@ async def test_noisy_model_lowers_the_scores(dataset: Path) -> None:
 
 async def test_model_and_content_errors_are_recorded(dataset: Path) -> None:
     class Broken(OracleLLM):
-        async def extract(self, document_text: str) -> object:  # type: ignore[override]
+        async def extract(  # type: ignore[override]
+            self, document_text: str, part: object = None
+        ) -> object:
             raise RuntimeError("API down")
 
     cases = [c for c in load_dataset(dataset) if c.format == "csv"]
@@ -197,7 +199,9 @@ def test_cli_fails_loudly_when_no_case_can_be_scored(
     import evaluation.__main__ as cli
 
     class NoKey(OracleLLM):
-        async def extract(self, document_text: str) -> object:  # type: ignore[override]
+        async def extract(  # type: ignore[override]
+            self, document_text: str, part: object = None
+        ) -> object:
             raise RuntimeError("No Claude credentials are configured.")
 
     monkeypatch.setattr(cli, "_llm", lambda name, noise: NoKey())

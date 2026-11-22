@@ -105,11 +105,16 @@ def apply_sign_convention(data: InvoiceData) -> InvoiceData:
     )
 
 
+def _has_content(item: InvoiceLineItem) -> bool:
+    return any(value is not None for value in item.model_dump().values())
+
+
 def normalize_invoice(data: InvoiceData) -> InvoiceData:
     """Enforce what the JSON schema cannot: blank strings are null, the
     currency code is upper-case, uncertain fields are listed once,
-    ``is_invoice`` agrees with ``document_type``, and amounts follow the
-    sign convention."""
+    ``is_invoice`` agrees with ``document_type``, amounts follow the sign
+    convention, and line items with no value at all (for example a
+    "brought forward" row read as a line) are dropped."""
     currency = _clean(data.currency)
     data = apply_sign_convention(data)
     return data.model_copy(
@@ -121,7 +126,11 @@ def normalize_invoice(data: InvoiceData) -> InvoiceData:
             "payment_terms": _clean(data.payment_terms),
             "vendor": _party(data.vendor),
             "customer": _party(data.customer),
-            "line_items": [_line(item) for item in data.line_items],
+            "line_items": [
+                line
+                for line in (_line(item) for item in data.line_items)
+                if _has_content(line)
+            ],
             "uncertain_fields": list(dict.fromkeys(data.uncertain_fields)),
         }
     )

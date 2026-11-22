@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 from app.core.config import get_settings
+from app.extraction.chunked import ChunkingConfig
 from app.extraction.llm import ClaudeInvoiceLLM, InvoiceLLM
 from app.processing.ocr import OcrConfig
 from evaluation import evaluate_validation
@@ -80,6 +81,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     ev.add_argument("--limit", type=int, default=None, help="only the first N cases")
     ev.add_argument(
+        "--chunk-chars",
+        type=int,
+        default=None,
+        help="extraction part size (default: LLM_CHUNK_CHARS); small values "
+        "force the split-and-merge path on short documents",
+    )
+    ev.add_argument(
         "--yes", action="store_true", help="confirm spending money (claude)"
     )
 
@@ -133,7 +141,12 @@ def main(argv: list[str] | None = None) -> int:
         languages=settings.ocr_languages, timeout_seconds=settings.ocr_timeout_seconds
     )
     print(f"Evaluating {len(cases)} cases with {args.llm}…")
-    results = asyncio.run(run(cases, _llm(args.llm, args.noise), config))
+    chunking = ChunkingConfig(
+        chunk_chars=args.chunk_chars or settings.llm_chunk_chars,
+        max_parts=settings.llm_max_parts,
+        concurrency=settings.llm_part_concurrency,
+    )
+    results = asyncio.run(run(cases, _llm(args.llm, args.noise), config, chunking))
     summary = write_results(results, out, args.llm, str(args.dataset))
     print("\n" + render_markdown(summary, args.llm, str(args.dataset)))
     errors = summary["errors"]

@@ -53,6 +53,15 @@ refund or reduce what the customer owes; extract them fully, like invoices, \
 with is_invoice true). Use "other" only for documents that are neither, such \
 as statements, quotes, contracts or price lists; then set is_invoice to false \
 and leave all other fields null or empty.
+- Long documents arrive in parts. Then the message starts with "Part k of n \
+of one document" before the <document> tags. Extract only what that part \
+shows and leave the rest null or empty; the parts are combined afterwards, \
+headers from the first part that states them and totals from the last. A \
+part that continues a billing document (more line items, the totals) belongs \
+to it, even without a title or header: set document_type to "invoice", or \
+"credit_note" if the part shows it is one, and extract all its line items. \
+Report subtotal, tax_amount and total_amount only where the part prints the \
+document's totals, not page subtotals or amounts carried forward.
 - List in uncertain_fields every field whose value you are not confident \
 about: illegible or garbled (OCR) text, several conflicting candidates, or \
 an ambiguous date. A field you set to null because it is absent is not \
@@ -72,6 +81,10 @@ class ExtractionIncompleteError(ExtractionError):
     """The model's output was cut off or did not match the schema."""
 
 
+class OutputLimitError(ExtractionIncompleteError):
+    """The output hit the token limit; a smaller part of the document may fit."""
+
+
 class ExtractionConfigurationError(ExtractionError):
     """Claude cannot be called as configured (e.g. no credentials)."""
 
@@ -80,6 +93,14 @@ MISSING_CREDENTIALS = (
     "No Claude credentials are configured. Set ANTHROPIC_API_KEY for the "
     "worker, then retry the job."
 )
+
+
+@dataclass(frozen=True)
+class Part:
+    """Which part of a long document a request covers (1-based)."""
+
+    number: int
+    total: int
 
 
 @dataclass(frozen=True)
@@ -94,7 +115,19 @@ class LLMExtraction:
 
 
 class InvoiceLLM(Protocol):
-    async def extract(self, document_text: str) -> LLMExtraction: ...
+    async def extract(
+        self, document_text: str, part: Part | None = None
+    ) -> LLMExtraction: ...
+
+
+def user_message(document_text: str, part: Part | None) -> str:
+    """The request text: the document, introduced by its part number when it
+    is one part of a longer document (outside the tags, so it is read as an
+    instruction rather than as document content)."""
+    document = f"<document>\n{document_text}\n</document>"
+    if part is None:
+        return document
+    return f"Part {part.number} of {part.total} of one document.\n{document}"
 
 
 @dataclass(frozen=True)
@@ -117,9 +150,11 @@ class ClaudeInvoiceLLM:
     timeout_seconds: float = 600.0
     max_retries: int = 2
 
-    async def extract(self, document_text: str) -> LLMExtraction:
+    async def extract(
+        self, document_text: str, part: Part | None = None
+    ) -> LLMExtraction:
         try:
-            return await self._extract(document_text)
+            return await self._extract(user_message(document_text, part))
         except TypeError as exc:
             # The SDK signals unresolvable credentials with a TypeError when
             # the request is built; anything else is a genuine bug.
@@ -127,7 +162,7 @@ class ClaudeInvoiceLLM:
                 raise ExtractionConfigurationError(MISSING_CREDENTIALS) from exc
             raise
 
-    async def _extract(self, document_text: str) -> LLMExtraction:
+    async def _extract(self, content: str) -> LLMExtraction:
         async with (
             anthropic.AsyncAnthropic(
                 timeout=self.timeout_seconds, max_retries=self.max_retries
@@ -149,7 +184,7 @@ class ClaudeInvoiceLLM:
                 messages=[
                     {
                         "role": "user",
-                        "content": f"<document>\n{document_text}\n</document>",
+                        "content": content,
                     }
                 ],
             ) as stream,
@@ -163,7 +198,7 @@ class ClaudeInvoiceLLM:
                 f"The model declined to process this document (category: {category})."
             )
         if message.stop_reason == "max_tokens":
-            raise ExtractionIncompleteError(
+            raise OutputLimitError(
                 f"The extraction exceeded {self.max_tokens} output tokens "
                 "(LLM_MAX_TOKENS) and was cut off."
             )

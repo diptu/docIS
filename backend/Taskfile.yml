@@ -223,6 +223,16 @@ tasks:
     cmds:
       - uv run python -m evaluation run --llm claude --yes --dataset evaluation/third_party_eval/dataset --out evaluation/third_party_eval/results {{.CLI_ARGS}}
 
+  reconcile-generate:
+    desc: Write labelled PDF-PDF and PDF-Excel comparison pairs (free)
+    cmds:
+      - uv run python -m evaluation reconcile-generate {{.CLI_ARGS}}
+
+  reconcile:
+    desc: Measure cross-document comparison on the labelled pairs (free; --extraction claude costs money)
+    cmds:
+      - uv run python -m evaluation reconcile {{.CLI_ARGS}}
+
   # ==========================================
   # DATABASE
   # ==========================================

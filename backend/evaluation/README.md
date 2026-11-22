@@ -121,3 +121,24 @@ Check names: `line_amounts`, `lines_subtotal`, `tax_amount`, `total`, `amount_du
 | Precision / recall / F1 / specificity | the checks as a detector of inconsistent invoices |
 | Per check | expected failures caught (recall) and false alarms, per check |
 | By injected error | how often each kind of error is caught |
+
+## Cross-document comparison
+
+`reconciliation.py` builds labelled comparison pairs from synthetic invoices and measures the app's comparison features on them. No Claude is needed unless you ask for it.
+
+```bash
+task reconcile-generate   # 102 pairs in evaluation/reconciliation_eval/ (gitignored)
+task reconcile            # results in evaluation/results/reconciliation_*.{json,md}
+task reconcile -- --extraction claude --yes   # PDF-PDF with real extraction (costs money)
+```
+
+The pairs:
+- **PDF↔PDF:** one change between the two versions, either digital or scanned.
+- **PDF↔Excel:** one difference between an invoice and its line-item spreadsheet, as `.xlsx` or `.csv`.
+
+The labels follow from the invoices themselves. They record:
+- which fields and lines differ;
+- how the lines pair up;
+- which spreadsheet rows disagree with the PDF.
+
+They never come from the code under test.

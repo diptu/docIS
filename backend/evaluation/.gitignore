@@ -1,5 +1,6 @@
 dataset/
 validation_expectations/
+reconciliation_eval/
 results/
 # Third-party data: licence unknown, keep it out of git.
 third_party/

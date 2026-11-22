@@ -57,9 +57,11 @@ class LinePair:
             return "right_only"
         if self.right_index is None:
             return "left_only"
+        # A field neither line states (say, no product code on either
+        # side) is not a difference.
         return (
             "equal"
-            if all(f.status == Status.EQUAL for f in self.fields)
+            if all(f.status in (Status.EQUAL, Status.BOTH_MISSING) for f in self.fields)
             else "different"
         )
 

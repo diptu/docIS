@@ -29,6 +29,13 @@ from evaluation.evaluate_extraction import (
     write_results,
 )
 from evaluation.generate import generate
+from evaluation.reconciliation import (
+    PAIRS_DIR,
+    evaluate_pairs,
+    generate_pairs,
+    render_summary,
+    write_reconciliation,
+)
 from evaluation.reporting import (
     DATASET_DIR,
     EVALUATION_REPORT,
@@ -69,6 +76,27 @@ def main(argv: list[str] | None = None) -> int:
     conv.add_argument("--source", type=Path, default=None)
     conv.add_argument("--out", type=Path, default=None)
 
+    rgen = commands.add_parser(
+        "reconcile-generate", help="write labelled PDF-PDF and PDF-Excel pairs"
+    )
+    rgen.add_argument("--out", type=Path, default=PAIRS_DIR)
+    rgen.add_argument("--seed", type=int, default=2026)
+    rgen.add_argument("--repeats", type=int, default=3)
+
+    rec = commands.add_parser(
+        "reconcile", help="measure cross-document comparison on labelled pairs"
+    )
+    rec.add_argument("--pairs", type=Path, default=PAIRS_DIR)
+    rec.add_argument("--out", type=Path, default=RESULTS_DIR, help="results folder")
+    rec.add_argument(
+        "--extraction",
+        choices=["exact", "claude"],
+        default="exact",
+        help="invoices for the PDF-PDF invoice comparison: the labels (free) "
+        "or extracted with Claude (costs money)",
+    )
+    rec.add_argument("--yes", action="store_true", help="confirm spending money")
+
     rep = commands.add_parser("report", help="rebuild the HTML report from results")
     rep.add_argument("--results", type=Path, default=RESULTS_DIR)
 
@@ -100,6 +128,27 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "generate":
         paths = generate(args.dataset, args.count, args.seed, args.expectations)
         print(f"Wrote {len(paths)} labelled cases to {args.dataset}")
+        return 0
+
+    if args.command == "reconcile-generate":
+        count = generate_pairs(args.out, args.seed, args.repeats)
+        print(f"Wrote {count} labelled pairs to {args.out}")
+        return 0
+
+    if args.command == "reconcile":
+        if args.extraction == "claude" and not args.yes:
+            print("Claude extraction costs money; re-run with --yes to proceed.")
+            return 2
+        settings = get_settings()
+        config = OcrConfig(
+            languages=settings.ocr_languages,
+            timeout_seconds=settings.ocr_timeout_seconds,
+        )
+        llm = _llm("claude", 0.0) if args.extraction == "claude" else None
+        measured = evaluate_pairs(args.pairs, config, args.extraction, llm)
+        path = write_reconciliation(measured, args.out)
+        print("\n" + render_summary(measured))
+        print(f"Results: {path.parent}")
         return 0
 
     if args.command == "report":

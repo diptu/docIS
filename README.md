@@ -340,6 +340,8 @@ cd backend
 task eval-3p-validate   # validation precision/recall on the third-party dataset (free)
 task eval-3p            # extraction accuracy with Claude (costs API credit)
 task eval-report        # rebuild the HTML reports
+task reconcile-generate # labelled PDF-PDF and PDF-Excel comparison pairs (free)
+task reconcile          # measure cross-document comparison on them (free)
 ```
 
 Results of the latest run are in [`deliverables.md`](deliverables.md#deliverable-7--evaluation-report). The run used 181 labelled third-party documents with Claude Opus 5.5:

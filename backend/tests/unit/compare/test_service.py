@@ -56,6 +56,24 @@ def test_identical_invoices_compare_equal() -> None:
     assert [pair.status for pair in lines] == ["equal"]
 
 
+def test_lines_without_a_product_code_on_either_side_are_equal() -> None:
+    """Found by the reconciliation evaluation: a field neither line states
+    made every such line "different", even against an identical copy."""
+    invoice = sample_invoice()
+    no_codes = invoice.model_copy(
+        update={
+            "line_items": [
+                line.model_copy(update={"product_code": None})
+                for line in invoice.line_items
+            ]
+        }
+    )
+
+    _, lines = compare_invoices(no_codes, no_codes)
+
+    assert [pair.status for pair in lines] == ["equal"] * len(no_codes.line_items)
+
+
 def test_changed_total_and_vendor_are_reported() -> None:
     vendor = sample_invoice().vendor.model_copy(update={"tax_id": "DE999"})
     fields, _ = compare_invoices(

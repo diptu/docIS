@@ -446,7 +446,7 @@ There are 181 labelled third-party invoice documents (`backend/evaluation/third_
 | Document failure rate | **1.1%** (2 / 181) |
 | Validation precision | **98.1%** |
 | Validation recall | **99.7%** (100% of 860 injected errors detected; 9.5% false-alarm rate) |
-| Cross-document reconciliation accuracy | Not evaluated (feature implemented in `app/compare/`, no labelled pairs) |
+| Cross-document reconciliation accuracy | PDF↔Excel rows: **94.0%** (100% on digital PDFs, 88.3% on scans); PDF↔PDF invoice comparison: **100%** of 54 pairs with exact invoices. See *Cross-document comparison* below. |
 | API cost for the run | $4.62 |
 
 **Results by category:**
@@ -467,6 +467,58 @@ There are 181 labelled third-party invoice documents (`backend/evaluation/third_
 **Failures:**
 - `freight-trip-reference-2`: the network connection dropped during the API call (`ReadError`). In production this would be retried automatically.
 - `photo-rotate-small-severe`: OCR found no text in a photo tilted about 10°. Fixed since by deskewing; see the OCR benchmark below.
+
+#### Cross-document comparison (PDF↔PDF and PDF↔Excel)
+
+The dataset has 102 labelled pairs, generated from synthetic invoices with a fixed seed (`task reconcile-generate`). Labels come from the invoices' ground truth, never from the code being tested. Measured with `task reconcile`, which needs no Claude and costs nothing. Median 0.76 s per pair, including OCR of scanned sides.
+
+- **PDF↔PDF (54 pairs):** an invoice PDF against a second version that is a digital PDF or a scanned copy, with one of 9 changes:
+  - none
+  - a quantity changed
+  - a unit price changed
+  - a line removed
+  - a line added
+  - the lines reordered
+  - the invoice number changed
+  - the dates changed
+  - only the total changed
+
+  Totals are recomputed after line changes, so each document is internally consistent.
+- **PDF↔Excel (48 pairs):** an invoice PDF (digital or scanned) against a line-item spreadsheet (`.xlsx` with number cells, or `.csv` with locale-formatted text), with one of 6 differences:
+  - none
+  - an amount changed
+  - a quantity changed
+  - a unit price changed
+  - an extra row
+  - a missing row
+
+**PDF↔Excel row reconciliation**: end to end through text extraction or OCR, spreadsheet parsing and `reconcile_rows`. A row "flagged" means it doesn't match the PDF.
+
+| Scope | n | Accuracy | Precision | Recall | False alarms |
+|---|---|---|---|---|---|
+| Rows, all | 183 | **94.0%** | 74.4% | **100%** | 7.3% |
+| Rows, digital PDF | 89 | **100%** | 100% | 100% | 0% |
+| Rows, scanned PDF | 94 | 88.3% | 59.3% | 100% | 14.1% |
+| Rows, XLSX / CSV | 88 / 95 | 94.3% / 93.7% | 76.2% / 72.7% | 100% / 100% | 6.9% / 7.6% |
+| Pairs, all | 48 | 87.5% | 100% | 85.0% | 0% |
+
+- **Changed rows:** every changed amount, quantity, unit price and extra row was flagged (recall 100%). All 40 pairs whose difference the row check is designed to detect were classified correctly.
+- **False alarms:** all 11 are on scanned PDFs. In each case OCR misread a small number in a narrow column, for example a quantity `5` read as `>`, or `100` not recognised. Digital PDFs had none. No heading row was flagged.
+- **A row missing from the spreadsheet cannot be detected:** 0 of 8. The row check only asks whether each spreadsheet row is in the PDF, not the reverse. Two of those 8 pairs were flagged only because of OCR false alarms.
+
+**PDF↔PDF**
+
+| Method | Scope | n | Accuracy | Precision | Recall | False alarms |
+|---|---|---|---|---|---|---|
+| Text diff (end to end) | pairs, digital / scanned right side | 27 / 27 | 88.9% / 77.8% | 87.5% / 77.8% | 100% / 100% | 50% / 100% |
+| Invoice comparison (exact invoices) | pairs | 54 | **100%** | 100% | 100% | 0% |
+| Invoice comparison (exact invoices) | fields | 711 | **100%** | 100% | 100% | 0% |
+| Invoice comparison (exact invoices) | line differences | 208 | **100%** | 100% | 100% | 0% |
+
+- **Line pairing:** all 208 expected line pairs were found, with no wrong pairs, including after removals, additions and reordering.
+- **Text diff:** it catches every real change, but also flags every scanned copy (OCR noise) and every reordered invoice (the text changed but the invoice didn't). Use it as a "something changed" signal, not as a verdict.
+- **Invoice comparison here is given the exact invoices,** so it measures the comparison and line matching alone. End to end it inherits extraction accuracy (87.5% of fields). That run is built (`task reconcile -- --extraction claude --yes`) but has not run, because the API credit ran out.
+- **Bug found and fixed:** a line item with no product code on either side was marked "different" even against an identical copy. In the first run this produced false alarms on 3 of 6 identical pairs and 5 of 6 reordered pairs. Fields that neither side states no longer count as differences. A regression test was added.
 
 #### OCR clean-up benchmark
 
@@ -497,7 +549,7 @@ This was measured after adding image clean-up. It checks OCR output only, with n
 - **Review flags on real extractions:** flags raised on the model's actual output are noisier than in the injected-error test. They caught 5 of 7 documents that should have been flagged, with 39 false alarms out of 177 (11.4% precision).
 - **Not measured:**
   - customer name (the third-party labels don't include it)
-  - cross-document reconciliation
+  - PDF↔PDF invoice comparison end to end with Claude extraction (built as `--extraction claude`; the API credit ran out before it could run)
   - the synthetic dataset, which has only been run with the oracle harness check, not with Claude
 - **Long documents:**
   - **Size limit:** documents are split into parts, so there is no longer a single-call limit. The cap is now 120 parts of 50,000 characters (`LLM_MAX_PARTS`, about 6 million characters).

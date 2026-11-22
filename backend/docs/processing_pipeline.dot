@@ -1,0 +1,29 @@
+digraph P {
+  graph [rankdir=TB, fontname="Helvetica", fontsize=22, labelloc=t, label=<<b>docIS — Document Processing Pipeline</b>>, pad=0.4, nodesep=0.35, ranksep=0.45, bgcolor=white];
+  node  [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=12, color="#1f3b63", fillcolor="#eef3fa", margin="0.2,0.1"];
+  edge  [fontname="Helvetica", fontsize=10, color="#4a5b75"];
+  U  [label="Upload (multipart, many files)"];
+  V  [shape=diamond, fillcolor="#fff7e0", color="#b08900", label="Validate\nsize · count · magic bytes · parse"];
+  X  [fillcolor="#fde8e8", color="#b42318", label="Rejected with a clear 4xx message"];
+  S  [label="Store original + SHA-256\ninsert document + queued job"];
+  J1 [fillcolor="#fbeee4", color="#c0612b", label=<<b>Job 1: extract_content</b>>];
+  P1 [label="Digital PDF\npypdf text layer, per page"];
+  P2 [label="Scanned PDF page\npypdfium2 @300 DPI → Tesseract"];
+  P3 [label="JPG / PNG / TIFF frames\nPillow prep → Tesseract"];
+  P4 [label="XLSX / XLS\nopenpyxl / xlrd, every sheet"];
+  P5 [label="CSV\ndelimiter + encoding detection"];
+  PG [shape=cylinder, fillcolor="#e6f4f1", color="#1b7f6b", label="document_pages\n(text, method, OCR confidence)"];
+  SH [shape=cylinder, fillcolor="#e6f4f1", color="#1b7f6b", label="document_sheets\n(JSONB grid)"];
+  CH [shape=cylinder, fillcolor="#e6f4f1", color="#1b7f6b", label="document_chunks\nGIN full-text + HNSW vectors"];
+  J2 [fillcolor="#fbeee4", color="#c0612b", label=<<b>Job 2: extract_invoice</b>>];
+  L  [fillcolor="#f1ecf9", color="#6b4fa8", label="Claude structured output → InvoiceData\nmissing → null · doubtful → uncertain_fields"];
+  N  [label="Normalise\ndates · currency · Decimal amounts"];
+  VAL[label="Deterministic validation (Decimal)\nqty×price · Σlines = subtotal · tax\nsubtotal + tax = total · amount due"];
+  DUP[label="Duplicate checks\nSHA-256 · vendor + number · vendor + date + total"];
+  RV [shape=cylinder, fillcolor="#e6f4f1", color="#1b7f6b", label="invoices · invoice_line_items\nvalidation_errors"];
+  H  [fillcolor="#e9f5e9", color="#2e7d32", label="Human review in UI\ncorrect → invoice_corrections → re-validate"];
+  U -> V; V -> X [label="invalid / corrupted / empty"]; V -> S [label="ok"]; S -> J1;
+  J1 -> {P1 P2 P3 P4 P5};
+  {P1 P2 P3} -> PG; {P4 P5} -> SH;
+  PG -> CH; SH -> CH; CH -> J2; J2 -> L -> N -> VAL -> DUP -> RV -> H;
+}

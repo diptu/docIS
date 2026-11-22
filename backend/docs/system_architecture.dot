@@ -1,0 +1,37 @@
+digraph G {
+  graph [rankdir=TB, fontname="Helvetica", fontsize=22, labelloc=t, label=<<b>docIS — System Architecture</b>>, pad=0.4, nodesep=0.7, ranksep=0.8, bgcolor=white, newrank=true];
+  node  [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=13, color="#1f3b63", fillcolor="#eef3fa", margin="0.25,0.12"];
+  edge  [fontname="Helvetica", fontsize=10, color="#4a5b75", fontcolor="#33415c"];
+
+  subgraph cluster_client { label="Client"; style="rounded,dashed"; color="#9aa8bd"; fontsize=14;
+    UI [label=<<b>React + Vite SPA</b><br/><font point-size="10">Tailwind · TanStack Query<br/>Documents · Detail · Processing<br/>Compare · Search</font>>];
+  }
+  subgraph cluster_api { label="FastAPI"; style="rounded,dashed"; color="#9aa8bd"; fontsize=14;
+    API [label=<<b>REST API</b><br/><font point-size="10">/documents  upload · status · invoice<br/>corrections · retry · validation-errors<br/>/search  keyword · semantic · hybrid<br/>/compare · /invoices/review · /processing/jobs</font>>];
+  }
+  subgraph cluster_data { label="Data"; style="rounded,dashed"; color="#9aa8bd"; fontsize=14;
+    FS [shape=cylinder, fillcolor="#f2f2f2", label=<<b>File storage</b><br/><font point-size="10">originals · read-only · SHA-256</font>>];
+    DB [shape=cylinder, fillcolor="#e6f4f1", color="#1b7f6b", label=<<b>PostgreSQL + pgvector</b><br/><font point-size="10">documents · pages · sheets · chunks<br/>invoices · line items · validation errors<br/>corrections · processing jobs</font>>];
+    Q  [shape=cylinder, fillcolor="#fbeee4", color="#c0612b", label=<<b>Redis</b><br/><font point-size="10">Celery broker</font>>];
+  }
+  subgraph cluster_workers { label="Background processing"; style="rounded,dashed"; color="#9aa8bd"; fontsize=14;
+    W [fillcolor="#fbeee4", color="#c0612b", label=<<b>Celery worker</b><br/><font point-size="10">prefetch=1 · acks_late · retries w/ backoff<br/>extract_content → extract_invoice</font>>];
+    B [fillcolor="#fbeee4", color="#c0612b", label=<<b>Celery beat</b><br/><font point-size="10">recover stale / undispatched jobs</font>>];
+  }
+  subgraph cluster_ai { label="AI services"; style="rounded,dashed"; color="#9aa8bd"; fontsize=14;
+    LLM [fillcolor="#f1ecf9", color="#6b4fa8", label=<<b>Anthropic API</b><br/><font point-size="10">Claude Opus 5.5 · structured output</font>>];
+    EMB [fillcolor="#f1ecf9", color="#6b4fa8", label=<<b>FastEmbed (local)</b><br/><font point-size="10">bge-small-en-v1.5 · 384-d</font>>];
+  }
+
+  UI -> API [label="HTTP /api"];
+  API -> FS [label="store original"];
+  API -> DB [label="document + queued job\n(one transaction)"];
+  API -> Q  [label="dispatch after commit"];
+  API -> EMB [label="embed search query", style=dashed];
+  Q -> W;
+  B -> Q [label="re-dispatch"];
+  W -> FS [label="read original"];
+  W -> DB [label="pages, sheets, chunks,\ninvoice, errors, progress"];
+  W -> LLM [label="invoice extraction"];
+  W -> EMB [label="embed chunks"];
+}

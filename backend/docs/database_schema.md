@@ -2,6 +2,10 @@
 
 ## Entity Relationship Diagram
 
+![Entity relationship diagram](database_schema.png)
+
+The PNG is rendered from [`database_schema.dot`](database_schema.dot). The Mermaid version is below.
+
 ```mermaid
 erDiagram
     DOCUMENTS {
@@ -117,11 +121,33 @@ erDiagram
         timestamptz created_at "NOT NULL"
     }
 
+    INVOICE_CORRECTIONS {
+        uuid id PK
+        uuid document_id FK "NOT NULL, ON DELETE CASCADE, indexed"
+        jsonb changes "NOT NULL, field -> {old, new}"
+        timestamptz created_at "NOT NULL, default now()"
+    }
+
+    DOCUMENT_CHUNKS {
+        uuid id PK
+        uuid document_id FK "NOT NULL, ON DELETE CASCADE, indexed"
+        int chunk_index "NOT NULL, unique per document"
+        int page_number "source page (PDF/image)"
+        int sheet_number "source sheet (XLSX/XLS/CSV)"
+        varchar(255) sheet_name
+        text content "NOT NULL, GIN full-text index"
+        vector(384) embedding "bge-small-en-v1.5, HNSW cosine index"
+        timestamptz created_at "NOT NULL, default now()"
+        timestamptz updated_at "NOT NULL, default now()"
+    }
+
     DOCUMENTS ||--o{ PROCESSING_JOBS : "processed by"
     DOCUMENTS ||--o| INVOICES : "extracted as"
     INVOICES ||--o{ INVOICE_LINE_ITEMS : "has lines"
     DOCUMENTS ||--o{ VALIDATION_ERRORS : "has problems"
     DOCUMENTS ||--o{ DOCUMENT_SHEETS : "has sheets"
+    DOCUMENTS ||--o{ INVOICE_CORRECTIONS : "corrected by"
+    DOCUMENTS ||--o{ DOCUMENT_CHUNKS : "indexed as"
 ```
 
 ## Migrations
@@ -239,6 +265,31 @@ and `GET /invoices/review` lists documents with unresolved errors.
 A failed extraction does not fail the document; retrying it re-runs only
 the extraction.
 
+### `invoice_corrections`
+
+Source: [`app/models/invoice.py`](../app/models/invoice.py)
+
+Audit history of manual corrections (`PUT /documents/{id}/invoice`). Each
+row stores only the fields that changed as `{"field": {"old": …, "new": …}}`.
+It is linked to the document rather than the invoice row (which is replaced
+on every save or re-extraction), so the history survives both. After a
+correction the values are re-normalised and the validation and duplicate
+checks run again. Exposed via `GET /documents/{id}/invoice/corrections`.
+
+### `document_chunks`
+
+Source: [`app/models/document_chunk.py`](../app/models/document_chunk.py)
+
+Search index. After content extraction, page text and spreadsheet rows are
+split into overlapping chunks; each chunk records where it came from
+(`page_number`, or `sheet_number` + `sheet_name`). `content` has a GIN
+full-text index (`to_tsvector('english', content)`) for keyword search, and
+`embedding` holds a 384-dimensional FastEmbed vector (BAAI/bge-small-en-v1.5)
+with an HNSW cosine index for semantic search. `embedding` is NULL when
+semantic search is disabled; keyword search still works. `GET /search`
+supports `mode=keyword | semantic | hybrid`; hybrid merges both rankings by
+reciprocal rank fusion.
+
 ### Indexes
 
 | Name                    | Column   |
@@ -260,3 +311,8 @@ the extraction.
 | `uq_invoice_line_items_invoice_id_line_number` | `invoice_id, line_number` |
 | `ix_validation_errors_document_id_resolved` | `document_id, resolved` (review queue) |
 | `uq_processing_jobs_active_document` | `document_id` — unique, partial: `WHERE status IN ('queued','running')` |
+| `ix_invoice_corrections_document_id` | `document_id` |
+| `uq_document_chunks_document_id_chunk_index` | `document_id, chunk_index` |
+| `ix_document_chunks_document_id` | `document_id` |
+| `ix_document_chunks_content_fts` | GIN on `to_tsvector('english', content)` (keyword search) |
+| `ix_document_chunks_embedding_hnsw` | HNSW on `embedding` with `vector_cosine_ops` (semantic search) |

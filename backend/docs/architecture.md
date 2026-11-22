@@ -69,7 +69,7 @@ flowchart TD
     J1 --> T{"File type"}
     T -- "digital PDF" --> P1["pypdf text layer, page by page"]
     T -- "scanned PDF page" --> P2["pypdfium2 render @300 DPI → Tesseract"]
-    T -- "JPG / PNG / TIFF frames" --> P3["Pillow prep (EXIF orientation, grayscale, upscale) → Tesseract"]
+    T -- "JPG / PNG / TIFF frames" --> P3["Image clean-up (lighting, contrast, noise, deskew) → Tesseract → orientation check"]
     T -- "XLSX / XLS" --> P4["openpyxl / xlrd, every sheet"]
     T -- "CSV" --> P5["delimiter + encoding detection"]
 

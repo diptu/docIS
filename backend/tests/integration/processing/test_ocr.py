@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytesseract
 import pytest
-from PIL import Image
+from PIL import Image, ImageChops
 
 from app.models.document_page import ExtractionMethod
 from app.processing import ocr
@@ -14,6 +14,7 @@ from app.processing.ocr import (
     _render_scale,
     ocr_image,
     ocr_image_file,
+    page_rotation,
     prepare_image,
 )
 from tests.support.helpers import (
@@ -103,7 +104,121 @@ def test_blank_scan_yields_empty_text(tmp_path: Path) -> None:
     assert (page.text, page.confidence) == ("", None)
 
 
+def lines(text: str) -> list[str]:
+    """Text lines, ignoring blank lines between Tesseract's paragraphs."""
+    return [line for line in text.splitlines() if line.strip()]
+
+
+LONG_PAGE = [
+    "ACME GmbH Invoice 2026-001",
+    "Total due: 1,250.00 EUR",
+    "Payment within 30 days",
+    "Bank transfer to account 12345678",
+]
+
+
+@requires_tesseract
+@pytest.mark.parametrize("angle", [10.0, -14.0])
+def test_tilted_photos_are_deskewed_before_reading(angle: float) -> None:
+    image = make_text_image(LONG_PAGE).rotate(
+        angle, expand=True, fillcolor="white", resample=Image.Resampling.BICUBIC
+    )
+
+    assert lines(ocr_image(image, CONFIG).text) == LONG_PAGE
+    # Without clean-up, Tesseract loses the text at this tilt.
+    plain = OcrConfig(enhance_images=False, detect_orientation=False)
+    assert lines(ocr_image(image, plain).text) != LONG_PAGE
+
+
+@requires_tesseract
+@pytest.mark.parametrize(
+    "turn",
+    [Image.Transpose.ROTATE_90, Image.Transpose.ROTATE_180, Image.Transpose.ROTATE_270],
+)
+def test_sideways_and_upside_down_pages_are_turned_upright(
+    turn: Image.Transpose,
+) -> None:
+    result = ocr_image(make_text_image(LONG_PAGE).transpose(turn), CONFIG)
+
+    assert lines(result.text) == LONG_PAGE
+    assert result.confidence is not None and result.confidence > 80
+
+
+@requires_tesseract
+def test_shadowed_photo_is_read(tmp_path: Path) -> None:
+    image = make_text_image(INVOICE).convert("L")
+    shadow = Image.new("L", image.size, 255)
+    shadow.paste(70, (image.width // 2, 0, image.width, image.height))
+    darkened = ImageChops.multiply(image, shadow)
+
+    assert ocr_image(darkened, CONFIG).text == "\n".join(INVOICE)
+
+
+@requires_tesseract
+def test_upright_pages_skip_orientation_detection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A confident first read is kept; no second Tesseract run."""
+
+    def fail(*_: object, **__: object) -> None:
+        raise AssertionError("orientation detection must not run")
+
+    monkeypatch.setattr(ocr.pytesseract, "image_to_osd", fail)
+
+    assert ocr_image(make_text_image(INVOICE), CONFIG).text == "\n".join(INVOICE)
+
+
+@requires_tesseract
+def test_failed_orientation_detection_keeps_the_first_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail(*_: object, **__: object) -> None:
+        raise pytesseract.TesseractError(1, "Too few characters")
+
+    monkeypatch.setattr(ocr.pytesseract, "image_to_osd", fail)
+    upside_down = make_text_image(LONG_PAGE).transpose(Image.Transpose.ROTATE_180)
+
+    result = ocr_image(upside_down, CONFIG)  # does not raise
+
+    assert lines(result.text) != LONG_PAGE
+
+
 # ---------------------------------------------------- no Tesseract needed
+
+
+@pytest.mark.parametrize(
+    ("osd", "expected"),
+    [
+        ({"rotate": 90, "orientation_conf": 5.0}, 90),
+        ({"rotate": 180, "orientation_conf": 0.5}, 0),  # too unsure
+        ({"rotate": 0, "orientation_conf": 9.0}, 0),
+    ],
+)
+def test_page_rotation_trusts_only_confident_guesses(
+    monkeypatch: pytest.MonkeyPatch, osd: dict[str, float], expected: int
+) -> None:
+    monkeypatch.setattr(ocr.pytesseract, "image_to_osd", lambda *_, **__: osd)
+
+    assert page_rotation(Image.new("L", (10, 10)), CONFIG) == expected
+
+
+def test_page_rotation_is_zero_without_tesseract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def missing(*_: object, **__: object) -> None:
+        raise pytesseract.TesseractNotFoundError()
+
+    monkeypatch.setattr(ocr.pytesseract, "image_to_osd", missing)
+
+    assert page_rotation(Image.new("L", (10, 10)), CONFIG) == 0
+
+
+def test_prepare_image_can_skip_enhancement(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        ocr, "enhance", lambda _: pytest.fail("enhancement must not run")
+    )
+
+    assert prepare_image(Image.new("RGB", (2000, 100)), enhance_image=False).mode == "L"
 
 
 def test_prepare_image_flattens_transparency_onto_white() -> None:

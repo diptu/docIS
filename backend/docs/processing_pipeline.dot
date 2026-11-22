@@ -9,7 +9,7 @@ digraph P {
   J1 [fillcolor="#fbeee4", color="#c0612b", label=<<b>Job 1: extract_content</b>>];
   P1 [label="Digital PDF\npypdf text layer, per page"];
   P2 [label="Scanned PDF page\npypdfium2 @300 DPI → Tesseract"];
-  P3 [label="JPG / PNG / TIFF frames\nPillow prep → Tesseract"];
+  P3 [label="JPG / PNG / TIFF frames\nclean-up: lighting · contrast · noise · deskew\n→ Tesseract → orientation check"];
   P4 [label="XLSX / XLS\nopenpyxl / xlrd, every sheet"];
   P5 [label="CSV\ndelimiter + encoding detection"];
   PG [shape=cylinder, fillcolor="#e6f4f1", color="#1b7f6b", label="document_pages\n(text, method, OCR confidence)"];

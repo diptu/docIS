@@ -31,10 +31,12 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 FROM python:3.11.9-slim-bookworm AS runtime
 
 # Tesseract OCR engine. English is always included; add more languages at
-# build time, e.g. --build-arg OCR_EXTRA_LANGS="deu fra".
+# build time, e.g. --build-arg OCR_EXTRA_LANGS="deu fra". The osd model
+# detects sideways and upside-down pages (installed explicitly, since
+# --no-install-recommends must not be allowed to drop it).
 ARG OCR_EXTRA_LANGS=""
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends tesseract-ocr \
+    && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-osd \
        $(for lang in $OCR_EXTRA_LANGS; do echo "tesseract-ocr-$lang"; done) \
     && rm -rf /var/lib/apt/lists/*
 

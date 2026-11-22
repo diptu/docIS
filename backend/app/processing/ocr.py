@@ -16,6 +16,7 @@ import pytesseract
 from PIL import Image, ImageOps, ImageSequence
 
 from app.models.document_page import ExtractionMethod
+from app.processing.image_prep import enhance, rotate_upright
 from app.processing.pages import ExtractedPage
 from app.processing.pdf_text import normalize_text
 from app.processing.progress import ProgressCallback, Stage, ignore_progress
@@ -24,6 +25,13 @@ POINTS_PER_INCH = 72
 # Upscale images whose longest side is below this; Tesseract misreads small
 # glyphs, and low-resolution photos/screenshots are common.
 MIN_OCR_LONG_SIDE = 1500
+# Trust Tesseract's page-orientation guess only above this confidence;
+# guesses on sparse or noisy pages are unreliable.
+MIN_ORIENTATION_CONFIDENCE = 2.0
+# Orientation is checked only when a first read scores below this mean word
+# confidence (sideways or upside-down pages score ~35; upright ones, even
+# handwriting, well above 70), so upright pages pay no extra Tesseract run.
+ORIENTATION_CHECK_BELOW_CONFIDENCE = 60.0
 
 
 class OcrError(Exception):
@@ -37,6 +45,10 @@ class OcrConfig:
     languages: str = "eng"
     dpi: int = 300
     timeout_seconds: int = 120
+    # Clean up images (noise, lighting, contrast, skew) and turn sideways or
+    # upside-down pages upright before recognising text.
+    enhance_images: bool = True
+    detect_orientation: bool = True
     # Cap on rendered bitmap size, so an oversized PDF page cannot exhaust
     # memory (50 MP is A0 at roughly 200 DPI).
     max_render_pixels: int = 50_000_000
@@ -48,8 +60,10 @@ class OcrResult:
     confidence: float | None
 
 
-def prepare_image(image: Image.Image) -> Image.Image:
-    """Normalise an image for OCR: orientation, background, grayscale, size."""
+def prepare_image(image: Image.Image, enhance_image: bool = True) -> Image.Image:
+    """Normalise an image for OCR: EXIF orientation, transparent background,
+    grayscale, then (optionally) noise, lighting, contrast and skew
+    correction (see ``image_prep``), and finally a minimum size."""
     image = ImageOps.exif_transpose(image)
     if image.mode in ("RGBA", "LA", "PA") or "transparency" in image.info:
         # Flatten onto white; otherwise transparent areas turn black.
@@ -57,6 +71,8 @@ def prepare_image(image: Image.Image) -> Image.Image:
         background = Image.new("RGBA", rgba.size, "white")
         image = Image.alpha_composite(background, rgba)
     image = image.convert("L")
+    if enhance_image:
+        image = enhance(image)
 
     long_side = max(image.size)
     if 0 < long_side < MIN_OCR_LONG_SIDE:
@@ -90,14 +106,54 @@ def _lines_from_data(data: dict[str, list[object]]) -> tuple[str, float | None]:
     return normalize_text(text), mean
 
 
+def page_rotation(image: Image.Image, config: OcrConfig) -> int:
+    """Clockwise degrees (0, 90, 180, 270) that turn the page upright,
+    according to Tesseract's orientation detection; 0 when unsure.
+
+    Detection needs enough text and the ``osd`` model; any failure just
+    means the page is read as it is.
+    """
+    try:
+        osd = pytesseract.image_to_osd(
+            image,
+            config="--psm 0",
+            output_type=pytesseract.Output.DICT,
+            timeout=config.timeout_seconds,
+        )
+    except (
+        pytesseract.TesseractError,
+        pytesseract.TesseractNotFoundError,
+        RuntimeError,
+    ):
+        return 0
+    if float(osd.get("orientation_conf", 0)) < MIN_ORIENTATION_CONFIDENCE:
+        return 0
+    return int(osd.get("rotate", 0)) % 360
+
+
 def ocr_image(
     image: Image.Image, config: OcrConfig, dpi: int | None = None
 ) -> OcrResult:
     """Run Tesseract on one image."""
+    prepared = prepare_image(image, enhance_image=config.enhance_images)
+    result = _recognise(prepared, config, dpi)
+    if config.detect_orientation and (
+        result.confidence is None
+        or result.confidence < ORIENTATION_CHECK_BELOW_CONFIDENCE
+    ):
+        rotation = page_rotation(prepared, config)
+        if rotation:
+            upright = _recognise(rotate_upright(prepared, rotation), config, dpi)
+            if (upright.confidence or 0) > (result.confidence or 0):
+                result = upright
+    return result
+
+
+def _recognise(image: Image.Image, config: OcrConfig, dpi: int | None) -> OcrResult:
     options = f"--dpi {dpi}" if dpi else ""
     try:
         data = pytesseract.image_to_data(
-            prepare_image(image),
+            image,
             lang=config.languages,
             config=options,
             output_type=pytesseract.Output.DICT,

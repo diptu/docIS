@@ -103,7 +103,7 @@ flowchart TD
     S --> C["extract_content job"]
     C --> P1["Digital PDF → pypdf"]
     C --> P2["Scanned PDF → pypdfium2 300 DPI → Tesseract"]
-    C --> P3["JPG/PNG/TIFF → Pillow prep → Tesseract"]
+    C --> P3["JPG/PNG/TIFF → clean-up (lighting, contrast, noise, deskew) → Tesseract"]
     C --> P4["XLSX/XLS/CSV → openpyxl / xlrd / csv"]
     P1 & P2 & P3 & P4 --> I["Chunk + embed → search index"]
     I --> E["extract_invoice job → Claude structured output"]
@@ -271,10 +271,19 @@ Uploaded documents are validated and stored, then processed by background worker
 |---|---|
 | Digital PDF | Page-by-page text extraction with pypdf |
 | Scanned PDF | Page rendering at 300 DPI with pypdfium2, then Tesseract OCR |
-| JPG / PNG | Pillow preprocessing (EXIF orientation, transparency flattening, grayscale, upscaling small images), then Tesseract |
+| JPG / PNG | Image clean-up (`app/processing/image_prep.py`), then Tesseract. See *Image clean-up* below. |
 | TIFF | Multi-frame: each frame is OCRed as a page |
 | XLSX / XLS | Every sheet parsed with openpyxl / xlrd (dates, booleans, errors and hidden sheets handled) |
 | CSV | Delimiter and encoding detection with Python's `csv` module |
+
+**Image clean-up before OCR**
+
+Applies to photos, scanned PDF pages and TIFF frames. Each step measures the image first and only changes it when needed, so clean scans pass through untouched.
+- **Basics:** EXIF orientation, a white background for transparent images, grayscale, and enlarging small images.
+- **Illumination and contrast:** estimates the paper's brightness across the page and divides it out, which removes shadows and lifts dark photos. It then stretches the contrast.
+- **Noise reduction:** a 3×3 median filter, applied only to grainy images that are about to be brightened. On noisy white scans, Tesseract measurably read better without it, because the filter erodes thin strokes and decimal points.
+- **Deskewing:** finds the text angle within ±15° by testing angles and keeping the one where text rows line up best, then rotates to level.
+- **Orientation:** when a first read has low confidence, Tesseract's orientation detection (OSD) checks for a sideways or upside-down page. The page is turned upright and read again, and the better of the two reads is kept.
 
 **4. Search indexing**
 - Splits extracted content into overlapping chunks, each tied to its source page or sheet.
@@ -424,7 +433,23 @@ There are 181 labelled third-party invoice documents (`backend/evaluation/third_
 
 **Failures:**
 - `freight-trip-reference-2`: the network connection dropped during the API call (`ReadError`). In production this would be retried automatically.
-- `photo-rotate-small-severe`: OCR found no text in a photo tilted about 10°.
+- `photo-rotate-small-severe`: OCR found no text in a photo tilted about 10°. Fixed since by deskewing; see the OCR benchmark below.
+
+#### OCR clean-up benchmark
+
+This was measured after adding image clean-up. It checks OCR output only, with no Claude calls, on the 68 documents in this dataset that go through OCR. A value counts as found when it appears in the OCR text: the invoice number, subtotal, tax, total and every line amount (535 values). Amounts are matched by number, so `1.234,56` and `1,234.56` both match.
+
+| Category | Docs | Values found before | After | Median OCR time before → after |
+|---|---|---|---|---|
+| Photographed | 45 | 68.9% | **85.3%** | 0.93 s → 1.29 s |
+| Scanned | 15 | 99.2% | 99.2% | 1.01 s → 1.19 s |
+| Handwritten | 8 | 16.4% | 16.4% | 1.36 s → 1.38 s |
+| **All** | 68 | 70.3% | **81.3%** | 1.00 s → 1.29 s |
+
+- **Documents with no text:** 1 before (`photo-rotate-small-severe`), 0 after.
+- **Better:** 11 documents. Tilted, sideways and upside-down, shadowed, dark, screen-photographed and perspective photos went from 0–5 of 8 values found to 6–8.
+- **Worse:** 2 documents, each missing one character of the invoice number.
+- **Not yet measured:** the Claude extraction evaluation above was run before this change and has not been re-run.
 
 #### Known limitations
 - **Credit notes:**
@@ -433,7 +458,7 @@ There are 181 labelled third-party invoice documents (`backend/evaluation/third_
   - This is a definition mismatch rather than misreading.
 - **Images:**
   - Handwritten and damaged photos cause OCR misreads.
-  - OCR preprocessing does not straighten tilted images, which caused the one OCR failure.
+  - Perspective distortion (a page photographed at an angle on a table) is not corrected, and blurred photos remain hard to read.
 - **Multi-currency invoices:** the model sometimes picks the foreign currency.
 - **Validation false alarms:** the arithmetic checks raise false alarms (9.5%), mostly on the `total` check for invoices with credits, freight or surcharges.
 - **Review flags on real extractions:** flags raised on the model's actual output are noisier than in the injected-error test. They caught 5 of 7 documents that should have been flagged, with 39 false alarms out of 177 (11.4% precision).

@@ -18,9 +18,9 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
-from typing import Any
+from typing import Any, Protocol
 
-from app.extraction.schema import InvoiceData, InvoiceLineItem
+from app.extraction.schema import InvoiceData
 
 AMOUNT_TOLERANCE = Decimal("0.01")
 DESCRIPTION_MATCH = 0.6  # minimum similarity to pair line items by description
@@ -139,14 +139,21 @@ def compare_invoices(
     return fields, match_line_items(left.line_items, right.line_items)
 
 
-def _line_fields(
-    left: InvoiceLineItem, right: InvoiceLineItem
-) -> list[FieldComparison]:
+class MatchableLine(Protocol):
+    """What line matching needs: an extracted line or a stored line row."""
+
+    @property
+    def product_code(self) -> str | None: ...
+    @property
+    def description(self) -> str | None: ...
+
+
+def _line_fields(left: MatchableLine, right: MatchableLine) -> list[FieldComparison]:
     return [compare_values(n, getattr(left, n), getattr(right, n)) for n in LINE_FIELDS]
 
 
 def match_line_items(
-    left: Sequence[InvoiceLineItem], right: Sequence[InvoiceLineItem]
+    left: Sequence[MatchableLine], right: Sequence[MatchableLine]
 ) -> list[LinePair]:
     """Pair line items: same product code first, then the most similar
     descriptions (at least DESCRIPTION_MATCH alike); the rest are unmatched.

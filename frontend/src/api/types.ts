@@ -233,3 +233,74 @@ export interface SearchResults {
   mode: SearchMode;
   hits: SearchHit[];
 }
+
+// Multi-document comparison (GET /compare/documents)
+
+export type CompareStatus = "match" | "mismatch" | "missing" | "unavailable";
+export type ComparePresence = "present" | "missing" | "unavailable";
+export type CompareKind =
+  | "text"
+  | "identifier"
+  | "name"
+  | "code"
+  | "date"
+  | "money"
+  | "quantity"
+  | "rate";
+
+export interface CompareCell {
+  document_id: string;
+  presence: ComparePresence;
+  /** As extracted; exact decimals as strings. */
+  value: string | number | boolean | null;
+  /** The normalised form that was compared. */
+  normalized: string | null;
+  matches_baseline: boolean | null;
+  /** Numeric fields: value minus the baseline, e.g. "+12.50". */
+  difference: string | null;
+}
+
+export interface CompareField {
+  field: string;
+  label: string;
+  group: "header" | "vendor" | "customer" | "totals" | "line";
+  kind: CompareKind;
+  status: CompareStatus;
+  /** The first document (in order) that has a value. */
+  baseline_document_id: string | null;
+  cells: CompareCell[];
+}
+
+export interface CompareLineRef {
+  document_id: string;
+  line_number: number | null;
+  matched_by: "reference" | "product_code" | "description" | null;
+}
+
+export interface CompareLineGroup {
+  position: number;
+  status: CompareStatus;
+  lines: CompareLineRef[];
+  fields: CompareField[];
+}
+
+export interface ComparedDocument {
+  id: string;
+  file_name: string;
+  file_type: string;
+  status: DocumentStatus;
+  reference: boolean;
+  invoice_available: boolean;
+  unavailable_reason: string | null;
+}
+
+export type CompareCounts = Record<CompareStatus, number>;
+
+export interface MultiComparison {
+  documents: ComparedDocument[];
+  fields: CompareField[];
+  line_items: CompareLineGroup[];
+  field_counts: CompareCounts;
+  line_counts: CompareCounts;
+  notes: string[];
+}

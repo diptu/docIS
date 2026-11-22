@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 
 import { useDeleteDocuments, useDocuments } from "../api/hooks";
 import type { DocumentDeleteResult, DocumentListItem } from "../api/types";
@@ -8,6 +8,7 @@ import { StatsCards } from "../components/StatsCards";
 import { jobStep, ProgressBar } from "../components/JobProgress";
 import { LoadError } from "../components/LoadError";
 import { UploadButton } from "../components/UploadButton";
+import { compareUrl, MAX_COMPARE } from "./ComparePage";
 import { FILE_TYPE_LABELS, formatDateTime, formatMoney, humanize } from "../lib/format";
 
 const PAGE_SIZE = 25;
@@ -44,6 +45,18 @@ export function DocumentsPage() {
   // Only rows in view count, so nothing off-screen is ever deleted.
   const selectedIds = items.filter((d) => selected.has(d.id)).map((d) => d.id);
   const allSelected = items.length > 0 && selectedIds.length === items.length;
+  // In the order they were ticked: the first one is the comparison reference.
+  const compareIds = [...selected].filter((id) => items.some((d) => d.id === id));
+  const unprocessed = items.filter((d) => selected.has(d.id) && d.status !== "processed");
+  const compareBlocked =
+    compareIds.length < 2
+      ? "Select at least two documents to compare."
+      : compareIds.length > MAX_COMPARE
+        ? `Compare at most ${MAX_COMPARE} documents at a time.`
+        : unprocessed.length
+          ? `Only processed documents can be compared (${unprocessed.map((d) => d.file_name).join(", ")} ${unprocessed.length === 1 ? "isn't" : "aren't"}).`
+          : null;
+  const navigate = useNavigate();
 
   const changeView = (apply: () => void) => {
     apply();
@@ -131,6 +144,15 @@ export function DocumentsPage() {
               className="rounded-md border border-slate-300 bg-white px-3 py-1.5 hover:bg-slate-50"
             >
               Clear
+            </button>
+            <button
+              type="button"
+              onClick={() => void navigate(compareUrl(compareIds))}
+              disabled={compareBlocked !== null}
+              title={compareBlocked ?? "Compare the selected documents; the first one you ticked is the reference."}
+              className="rounded-md bg-blue-600 px-3 py-1.5 font-semibold text-white shadow-sm hover:bg-blue-500 disabled:opacity-50"
+            >
+              Compare {selectedIds.length}
             </button>
             <button
               type="button"

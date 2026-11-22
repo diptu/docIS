@@ -1,5 +1,6 @@
 """
-Comparing two documents.
+Comparing documents: two in depth (``GET /compare``) or two or more field by
+field (``GET /compare/documents``).
 """
 
 import uuid
@@ -9,24 +10,40 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, status
 
 from app.api.dependencies import get_document_repository
+from app.compare.multi import (
+    MAX_DOCUMENTS,
+    MIN_DOCUMENTS,
+    CompareSource,
+    FieldRow,
+)
+from app.compare.multi import (
+    compare_documents as compare_many_documents,
+)
 from app.compare.service import (
     LinePair,
     compare_invoices,
     compare_text,
     reconcile_rows,
 )
-from app.core.exceptions import AppError, NotFoundError
+from app.core.exceptions import AppError, ConflictError, NotFoundError
 from app.extraction.records import data_from_invoice
-from app.models.document import Document
+from app.models.document import Document, DocumentStatus
 from app.repositories.document import DocumentRepository
 from app.schema.document import (
+    CompareCellRead,
+    ComparedDocumentRead,
+    CompareFieldRead,
+    CompareLineGroupRead,
+    CompareLineRefRead,
     ComparisonRead,
     DocumentBrief,
     FieldComparisonRead,
     InvoiceComparisonRead,
     LinePairRead,
+    MultiComparisonRead,
     RowCheckRead,
     RowReconciliationRead,
+    StatusCounts,
     TextComparisonRead,
 )
 
@@ -150,4 +167,99 @@ async def compare_documents(
         text=text_section,
         rows=rows_section,
         notes=notes,
+    )
+
+
+def _field_read(row: FieldRow) -> CompareFieldRead:
+    return CompareFieldRead(
+        field=row.field,
+        label=row.label,
+        group=row.group,
+        kind=row.kind,
+        status=row.status,
+        baseline_document_id=row.baseline_document_id,
+        cells=[CompareCellRead(**asdict(cell)) for cell in row.cells],
+    )
+
+
+@router.get(
+    "/documents",
+    summary="Compare two or more documents field by field",
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "A document was not found"},
+        status.HTTP_409_CONFLICT: {"description": "A document is not processed yet"},
+        status.HTTP_422_UNPROCESSABLE_CONTENT: {
+            "description": "Too few, too many or repeated documents"
+        },
+    },
+)
+async def compare_many(
+    ids: Annotated[
+        list[uuid.UUID],
+        Query(description="Documents to compare, in order; the first is the reference"),
+    ],
+    repository: Annotated[DocumentRepository, Depends(get_document_repository)],
+) -> MultiComparisonRead:
+    """Compare the extracted invoices of 2 to 10 processed documents of any
+    type (PDF, image, XLSX/XLS, CSV).
+
+    Every invoice field and every line item gets a row. Each document has a
+    cell holding its original value, the normalised value that was compared
+    and, for amounts, quantities and rates, the exact difference from the
+    baseline (the first document with a value). Rows are `match`,
+    `mismatch`, `missing` (some invoice lacks the value) or `unavailable`
+    (only one document has an invoice to read it from). Money is compared
+    exactly, in Decimal, to within 0.01.
+    """
+    if len(set(ids)) != len(ids):
+        raise SameDocumentError("Each document can only be compared once.")
+    if not MIN_DOCUMENTS <= len(ids) <= MAX_DOCUMENTS:
+        raise SameDocumentError(
+            f"Choose between {MIN_DOCUMENTS} and {MAX_DOCUMENTS} documents to compare."
+        )
+    documents = [await _load(repository, document_id) for document_id in ids]
+    if pending := [d for d in documents if d.status != DocumentStatus.PROCESSED]:
+        names = ", ".join(f'"{d.file_name}"' for d in pending)
+        raise ConflictError(
+            f"{names} {'has' if len(pending) == 1 else 'have'} not finished "
+            "processing, so can't be compared yet."
+        )
+
+    sources: list[CompareSource] = []
+    for document in documents:
+        invoice = await repository.get_invoice(document.id)
+        reason = None
+        if invoice is None:
+            reason = f"{document.file_name}: no invoice has been extracted from it."
+        elif not invoice.is_invoice:
+            reason = f"{document.file_name}: not recognised as an invoice."
+        sources.append(CompareSource(document.id, invoice, reason))
+
+    result = compare_many_documents(sources)
+    return MultiComparisonRead(
+        documents=[
+            ComparedDocumentRead(
+                id=d.id,
+                file_name=d.file_name,
+                file_type=d.file_type,
+                status=d.status,
+                reference=i == 0,
+                invoice_available=s.available,
+                unavailable_reason=s.unavailable_reason,
+            )
+            for i, (d, s) in enumerate(zip(documents, sources, strict=True))
+        ],
+        fields=[_field_read(row) for row in result.fields],
+        line_items=[
+            CompareLineGroupRead(
+                position=group.position,
+                status=group.status,
+                lines=[CompareLineRefRead(**asdict(ref)) for ref in group.lines],
+                fields=[_field_read(row) for row in group.fields],
+            )
+            for group in result.line_items
+        ],
+        field_counts=StatusCounts(**result.counts(result.fields)),
+        line_counts=StatusCounts(**result.counts(result.line_items)),
+        notes=result.notes,
     )

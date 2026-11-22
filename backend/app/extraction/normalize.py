@@ -78,9 +78,15 @@ def vendor_key(vendor: Party) -> str | None:
         tax_id = _NON_ALNUM.sub("", vendor.tax_id.lower())
         if tax_id:
             return f"tax:{tax_id}"[:255]
-    if vendor.name:
-        name = _LEGAL_SUFFIXES.sub(" ", vendor.name.lower())
-        name = _NON_ALNUM.sub("", name)
-        if name:
-            return f"name:{name}"[:255]
+    if name := name_key(vendor.name):
+        return f"name:{name}"[:255]
     return None
+
+
+def name_key(name: str | None) -> str | None:
+    """A company name for matching: case, punctuation and legal-form suffix
+    ignored ("ACME GmbH", "Acme" and "acme." all match)."""
+    if name is None:
+        return None
+    key = _NON_ALNUM.sub("", _LEGAL_SUFFIXES.sub(" ", name.lower()))
+    return key[:250] or None

@@ -215,3 +215,12 @@ export function useSheet(id: string, sheet: number | null) {
     enabled: sheet !== null,
   });
 }
+
+/** Field-by-field comparison of two or more documents, in the given order. */
+export function useComparison(ids: string[]) {
+  return useQuery({
+    queryKey: ["compare", ids],
+    queryFn: () => api.compareDocuments(ids),
+    enabled: ids.length >= 2,
+  });
+}

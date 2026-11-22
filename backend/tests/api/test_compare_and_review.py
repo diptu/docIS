@@ -87,3 +87,45 @@ async def test_review_queue_paging_is_validated(
 
     assert response.status_code == 422
     repository.list_for_review.assert_not_awaited()
+
+
+@pytest.mark.parametrize("count", [1, 11])
+async def test_compare_many_limits_the_number_of_documents(
+    client: AsyncClient, repository: Any, count: int
+) -> None:
+    ids = [str(uuid.uuid4()) for _ in range(count)]
+
+    response = await client.get("/compare/documents", params={"ids": ids})
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": "Choose between 2 and 10 documents to compare."
+    }
+    repository.get.assert_not_awaited()
+
+
+async def test_compare_many_maps_a_non_invoice_to_unavailable(
+    client: AsyncClient, repository: Any
+) -> None:
+    invoice_doc = build_document(file_name="a.pdf")
+    letter_doc = build_document(file_name="letter.pdf")
+    documents = {d.id: d for d in (invoice_doc, letter_doc)}
+    invoices = {
+        invoice_doc.id: build_invoice(invoice_doc.id),
+        letter_doc.id: build_invoice(letter_doc.id, is_invoice=False),
+    }
+    repository.get.side_effect = documents.get
+    repository.get_invoice.side_effect = invoices.get
+
+    response = await client.get(
+        "/compare/documents",
+        params={"ids": [str(invoice_doc.id), str(letter_doc.id)]},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [d["invoice_available"] for d in body["documents"]] == [True, False]
+    assert body["notes"][0] == "letter.pdf: not recognised as an invoice."
+    assert {f["status"] for f in body["fields"]} == {"unavailable"}
+    total = next(f for f in body["fields"] if f["field"] == "total_amount")
+    assert [c["presence"] for c in total["cells"]] == ["present", "unavailable"]

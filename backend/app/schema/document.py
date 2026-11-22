@@ -424,6 +424,64 @@ class ComparisonRead(BaseModel):
     notes: list[str]
 
 
+class CompareCellRead(BaseModel):
+    """One document's value for a field."""
+
+    document_id: uuid.UUID
+    presence: str  # present | missing | unavailable
+    value: Any  # as extracted; exact decimals as strings
+    normalized: str | None  # what was compared
+    matches_baseline: bool | None
+    difference: str | None  # numeric fields: value - baseline ("+12.50")
+
+
+class CompareFieldRead(BaseModel):
+    field: str  # "total_amount", "vendor.name", line: "unit_price"
+    label: str
+    group: str  # header | vendor | customer | totals | line
+    kind: str  # text | identifier | name | code | date | money | quantity | rate
+    status: str  # match | mismatch | missing | unavailable
+    baseline_document_id: uuid.UUID | None
+    cells: list[CompareCellRead]  # in document order
+
+
+class CompareLineRefRead(BaseModel):
+    document_id: uuid.UUID
+    line_number: int | None  # None: this document lacks the line
+    matched_by: str | None  # reference | product_code | description
+
+
+class CompareLineGroupRead(BaseModel):
+    position: int
+    status: str  # match | mismatch | missing | unavailable
+    lines: list[CompareLineRefRead]
+    fields: list[CompareFieldRead]
+
+
+class ComparedDocumentRead(DocumentBrief):
+    reference: bool
+    invoice_available: bool
+    unavailable_reason: str | None
+
+
+class StatusCounts(BaseModel):
+    match: int
+    mismatch: int
+    missing: int
+    unavailable: int
+
+
+class MultiComparisonRead(BaseModel):
+    """Two or more documents' extracted invoices, field by field."""
+
+    documents: list[ComparedDocumentRead]  # the first is the reference
+    fields: list[CompareFieldRead]
+    line_items: list[CompareLineGroupRead]
+    field_counts: StatusCounts
+    line_counts: StatusCounts
+    notes: list[str]
+
+
 # -------------------------------------------------------------------- search
 
 

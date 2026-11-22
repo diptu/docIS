@@ -1,10 +1,17 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, useLocation } from "react-router";
 
 import { listItem, summary } from "../test/fixtures";
 import { DocumentsPage } from "./DocumentsPage";
+
+let location = "";
+function LocationSpy() {
+  const { pathname, search } = useLocation();
+  location = pathname + search;
+  return null;
+}
 
 function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -12,6 +19,7 @@ function renderPage() {
     <QueryClientProvider client={client}>
       <MemoryRouter>
         <DocumentsPage />
+        <LocationSpy />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -230,4 +238,46 @@ describe("deleting documents", () => {
     expect(fetch.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
     expect(screen.getByLabelText("Select scan.png")).toBeChecked();
   });
+});
+
+it("compares the selected documents in the order they were ticked", async () => {
+  mockList([
+    listItem(),
+    listItem({ id: "22222222-2222-2222-2222-222222222222", file_name: "export.xlsx" }),
+    listItem({ id: "33333333-3333-3333-3333-333333333333", file_name: "scan.tiff" }),
+  ]);
+  renderPage();
+  await screen.findByRole("link", { name: "invoice.pdf" });
+
+  await userEvent.click(screen.getByLabelText("Select scan.tiff"));
+  const compare = screen.getByRole("button", { name: "Compare 1" });
+  expect(compare).toBeDisabled();
+  expect(compare).toHaveAttribute("title", "Select at least two documents to compare.");
+  await userEvent.click(screen.getByLabelText("Select invoice.pdf"));
+  await userEvent.click(screen.getByRole("button", { name: "Compare 2" }));
+
+  expect(location).toBe(
+    "/compare?ids=33333333-3333-3333-3333-333333333333&ids=11111111-1111-1111-1111-111111111111",
+  );
+});
+
+it("only compares processed documents", async () => {
+  mockList([
+    listItem(),
+    listItem({
+      id: "22222222-2222-2222-2222-222222222222",
+      file_name: "new.csv",
+      status: "uploaded",
+      processing: summary({ status: "queued" }),
+      invoice: null,
+    }),
+  ]);
+  renderPage();
+  await screen.findByRole("link", { name: "invoice.pdf" });
+
+  await userEvent.click(screen.getByLabelText("Select all documents on this page"));
+
+  const compare = screen.getByRole("button", { name: "Compare 2" });
+  expect(compare).toBeDisabled();
+  expect(compare.getAttribute("title")).toMatch(/Only processed documents.*new\.csv isn't/);
 });

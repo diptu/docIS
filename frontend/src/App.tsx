@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, NavLink, Route, Routes, useLocation, useNavigate } from "react-router";
 
 import { SearchIcon } from "./components/SearchIcon";
+import { ComparePage } from "./pages/ComparePage";
 import { DocumentDetailPage } from "./pages/DocumentDetailPage";
 import { DocumentsPage } from "./pages/DocumentsPage";
 import { ProcessingPage } from "./pages/ProcessingPage";
@@ -58,6 +59,9 @@ export function App() {
             <NavLink to="/processing" className={navClass}>
               Processing
             </NavLink>
+            <NavLink to="/compare" className={navClass}>
+              Compare
+            </NavLink>
             <NavLink to="/search" className={navClass}>
               Search
             </NavLink>
@@ -70,6 +74,7 @@ export function App() {
           <Route path="/" element={<DocumentsPage />} />
           <Route path="/documents/:id" element={<DocumentDetailPage />} />
           <Route path="/processing" element={<ProcessingPage />} />
+          <Route path="/compare" element={<ComparePage />} />
           <Route path="/search" element={<SearchPage />} />
           <Route path="*" element={<p>Page not found.</p>} />
         </Routes>

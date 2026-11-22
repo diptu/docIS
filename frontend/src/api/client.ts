@@ -8,6 +8,7 @@ import type {
   InvoiceCorrection,
   InvoiceData,
   InvoiceRead,
+  MultiComparison,
   ProcessingJob,
   ProcessingJobList,
   SearchMode,
@@ -157,6 +158,9 @@ export const api = {
   getSheets: (id: string): Promise<SheetSummary[]> => request(`/documents/${id}/sheets`),
   getSheet: (id: string, sheet: number, offset = 0, limit = 500): Promise<SheetRows> =>
     request(`/documents/${id}/sheets/${sheet}?offset=${offset}&limit=${limit}`),
+  /** Compare 2-10 processed documents; the first is the reference. */
+  compareDocuments: (ids: string[]): Promise<MultiComparison> =>
+    request(`/compare/documents?${new URLSearchParams(ids.map((id) => ["ids", id]))}`),
   fileUrl: (id: string, download = false): string =>
     `${API_BASE}/documents/${id}/file${download ? "?download=true" : ""}`,
   /** Whether the original file is still stored (HEAD: no download). */

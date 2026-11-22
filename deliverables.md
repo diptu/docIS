@@ -383,32 +383,62 @@ An offline harness, separate from the application:
 **Backend** (pytest):
 - Upload validation and file-type detection, including corrupted, empty, oversized and mismatched files.
 - PDF text extraction, OCR (real Tesseract) and multi-frame TIFF.
+- Image clean-up before OCR: deskewing, lighting and contrast, noise reduction, and turning sideways or upside-down pages upright.
 - Spreadsheet parsing: XLSX, XLS and CSV.
-- AI extraction: structured output, normalisation, and API failures such as credit, timeout and network errors, with the Anthropic API mocked.
-- Financial validation and duplicate detection.
+- AI extraction, with the Anthropic API mocked:
+  - structured output and normalisation;
+  - credit notes and the amount sign convention;
+  - long documents split into parts and merged, including parts whose output overflows;
+  - API failures such as credit, timeout and network errors.
+- Financial validation and duplicate detection, including credit notes versus invoices.
 - Database operations against real PostgreSQL + pgvector, using the actual Alembic migrations.
 - Background jobs: claiming, retries, backoff, recovery and heartbeats.
 - Search (keyword, semantic, hybrid), comparison, corrections, API error handling, and end-to-end flows.
+- Security: per-client rate limiting, and the file-storage guarantees (atomic writes, no overwrites, read-only files, no paths outside the storage folder).
+- The evaluation harness itself: scoring, dataset conversion, and the labelled comparison pairs.
 
 **Frontend** (Vitest + React Testing Library):
 - Uploads and file limits.
 - Document list and processing states.
-- Invoice display and corrections.
+- Invoice display and corrections, including the document-type selector and the credit-note badge.
 - Search, comparison, empty states and API failures.
 
-**Results** (final run, 22 November 2026):
+**Results** (final run, 23 November 2026):
 
 | Suite | Collected | Passed | Failed | Skipped | Coverage | Time |
 |---|---|---|---|---|---|---|
-| Backend (pytest) | 723 | 723 | 0 | 0 | 99.74% | 37.54 s |
-| Frontend (Vitest) | 89 tests in 15 files | 89 | 0 | 0 | n/a | 4.0 s |
+| Backend (pytest) | 810 | 810 | 0 | 0 | 99.77% | 49.04 s |
+| Frontend (Vitest) | 92 tests in 15 files | 92 | 0 | 0 | n/a | 2.86 s |
 
-The backend run includes the PostgreSQL integration tests (`TEST_POSTGRES_URL`) and the real embedding-model tests (`RUN_EMBEDDING_TESTS=1`). Without them, `uv run pytest` runs 701 tests and skips 22.
+The backend run includes the PostgreSQL integration tests (`TEST_POSTGRES_URL`) and the real embedding-model tests (`RUN_EMBEDDING_TESTS=1`). Without them, `uv run pytest` runs 788 tests and skips 22. Linting (ruff) and type checking (mypy for the backend, `tsc` for the frontend) also pass.
 
 ### Deliverable 7 — Evaluation Report
 
 **Evaluation report:** https://claude.ai/artifact/9Gt91uQ692xuoSpcq5h7Me
 The JSON results and HTML report can be regenerated with `task eval-3p-validate`, `task eval-3p` and `task eval-report`. They are written to `backend/evaluation/third_party_eval/results/`.
+
+#### Task 7 status
+
+| Task 7 requirement | Status | Where |
+|---|---|---|
+| Automated tests: document processing, OCR, spreadsheet parsing, AI extraction, validation, API endpoints, failure scenarios | Done: 810 backend and 92 frontend tests, all passing | Deliverable 6 |
+| Evaluation on a labelled dataset | Done: 181 labelled third-party documents with Claude Opus 5.5; 102 labelled comparison pairs | Dataset, *Cross-document comparison* |
+| Actual extraction accuracy | 87.5% of fields correct; 65.9% of invoices fully correct; 0% invented values | Measured results |
+| Processing time | 10.31 s average, 7.01 s median per document | Measured results |
+| Document success and failure rate | 98.9% / 1.1% (2 of 181) | Measured results |
+
+**Which code these numbers measure.** The 181-document extraction run (22 November 2026) was made before these later changes:
+- image clean-up before OCR;
+- the credit-note classification and sign convention;
+- splitting long documents into parts;
+- the prompt changes that came with them.
+
+Since then, only targeted checks have been run on the current code:
+- **Credit notes:** 10 of 10 fully correct, up from 0 of 10.
+- **OCR:** 81.3% of known values found in the OCR text, up from 70.3%.
+- **Long documents:** split and merged extraction matched one-call results on every invoice that ran.
+
+Those checks are reported in their own sections below. The full 181-document evaluation has not been re-run on the current code: it costs about $4–5 (`task eval-3p`), and the API credit ran out. Until it is re-run, the headline table describes the earlier version.
 
 #### Dataset
 

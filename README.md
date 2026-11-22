@@ -317,9 +317,9 @@ Main endpoints:
 
 ```bash
 # Backend (from backend/)
-uv run pytest                      # 701 tests; PostgreSQL and real-embedding tests are skipped
+uv run pytest                      # 788 tests; PostgreSQL and real-embedding tests are skipped
 TEST_POSTGRES_URL=postgresql+asyncpg://docis:docis@localhost:5434/docis_test \
-RUN_EMBEDDING_TESTS=1 uv run pytest  # full suite: 723 tests
+RUN_EMBEDDING_TESTS=1 uv run pytest  # full suite: 810 tests
 
 # Frontend (from frontend/)
 npm run test
@@ -330,8 +330,8 @@ Latest results:
 
 | Suite | Result |
 |---|---|
-| Backend | 723 passed, 0 failed, 99.74% coverage |
-| Frontend | 89 passed in 15 files |
+| Backend | 810 passed, 0 failed, 99.77% coverage |
+| Frontend | 92 passed in 15 files |
 
 ## Evaluation
 

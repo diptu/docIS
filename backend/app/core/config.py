@@ -25,6 +25,14 @@ class Settings(BaseSettings):
     max_upload_size_mb: float = Field(default=20, gt=0)
     max_files_per_upload: int = Field(default=20, gt=0)
 
+    # Rate limiting per client IP (app/api/rate_limit.py). The processing
+    # limit covers uploads and retries, which start OCR and paid AI calls.
+    # Behind proxies, set the number that append to X-Forwarded-For.
+    rate_limit_enabled: bool = True
+    rate_limit_per_minute: int = Field(default=600, gt=0)
+    rate_limit_processing_per_minute: int = Field(default=20, gt=0)
+    rate_limit_trusted_proxy_hops: int = Field(default=0, ge=0)
+
     # Tesseract language codes joined with "+", e.g. "eng+deu".
     ocr_languages: str = "eng"
     ocr_dpi: int = Field(default=300, ge=72, le=600)

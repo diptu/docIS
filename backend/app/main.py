@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, FastAPI, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.rate_limit import RateLimitMiddleware, RateLimits, TokenBucketLimiter
 from app.api.routes import compare, documents, invoices, processing, search
 from app.api.upload_limit import UploadSizeLimitMiddleware
 from app.core.config import get_settings
@@ -79,4 +80,18 @@ def _upload_limits() -> tuple[int, float, int]:
     )
 
 
+def _rate_limits() -> RateLimits:
+    current = app.dependency_overrides.get(get_settings, get_settings)()
+    return RateLimits(
+        enabled=current.rate_limit_enabled,
+        per_minute=current.rate_limit_per_minute,
+        processing_per_minute=current.rate_limit_processing_per_minute,
+        trusted_proxy_hops=current.rate_limit_trusted_proxy_hops,
+    )
+
+
+rate_limiter = TokenBucketLimiter()
+
 app.add_middleware(UploadSizeLimitMiddleware, limits=_upload_limits)
+# Added last, so it runs first: refused requests never reach the body.
+app.add_middleware(RateLimitMiddleware, limits=_rate_limits, limiter=rate_limiter)

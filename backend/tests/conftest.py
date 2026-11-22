@@ -14,6 +14,7 @@ Layers (selected with ``-m``; the marker is applied from the directory):
 
 import asyncio
 import os
+import sys
 
 # Tesseract's OpenMP threads busy-wait; several OCR processes at once (tests
 # plus a local worker) can slow each other to a near-standstill. Tesseract
@@ -53,6 +54,19 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             item.add_marker(parts[0])
         if parts[:2] == ("integration", "postgres"):
             item.add_marker("postgres")
+
+
+@pytest.fixture(autouse=True)
+def _fresh_rate_limits() -> None:
+    """Each test starts with full rate-limit buckets.
+
+    The limiter lives on the app module, so without this, requests from
+    earlier tests would count against later ones. The app is not imported
+    here; tests that never load it are unaffected.
+    """
+    main = sys.modules.get("app.main")
+    if main is not None:
+        main.rate_limiter.reset()
 
 
 @pytest.fixture

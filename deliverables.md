@@ -256,7 +256,7 @@ Uploaded documents are validated and stored, then processed by background worker
 - Checks file extensions against file signatures (magic bytes).
 - Parses uploaded files to detect corrupted or invalid documents.
 - Rejects empty files, oversized files and too many files per upload.
-- Stores originals unchanged and read-only, and records a SHA-256 hash for integrity and duplicate detection.
+- Stores originals unchanged and read-only, and records a SHA-256 hash used for duplicate detection.
 
 **2. Background processing and job management**
 - Celery workers with a Redis broker; job state is persisted in PostgreSQL.
@@ -358,10 +358,10 @@ An offline harness, separate from the application:
 
 | Suite | Collected | Passed | Failed | Skipped | Coverage | Time |
 |---|---|---|---|---|---|---|
-| Backend (pytest) | 696 | 696 | 0 | 0 | 99.74% | 37.59 s |
+| Backend (pytest) | 723 | 723 | 0 | 0 | 99.74% | 37.54 s |
 | Frontend (Vitest) | 89 tests in 15 files | 89 | 0 | 0 | n/a | 4.0 s |
 
-The backend run includes the PostgreSQL integration tests (`TEST_POSTGRES_URL`) and the real embedding-model tests (`RUN_EMBEDDING_TESTS=1`). Without them, `uv run pytest` runs 674 tests and skips 22.
+The backend run includes the PostgreSQL integration tests (`TEST_POSTGRES_URL`) and the real embedding-model tests (`RUN_EMBEDDING_TESTS=1`). Without them, `uv run pytest` runs 701 tests and skips 22.
 
 ### Deliverable 7 — Evaluation Report
 
@@ -508,7 +508,14 @@ The prompts below are rewritten for clarity, keeping the intent of the original 
 
 **Security measures in place:**
 - Uploads are checked by file signature (magic bytes), not just extension. Files are parsed to reject corrupted content, and size and count limits are enforced, including a request-size middleware.
-- Originals are stored unchanged, read-only and atomically, with SHA-256 integrity checks. Storage paths come from a generated UUID, never the uploaded file name.
+- **File storage** (`app/storage/local.py`):
+  - Originals are written to a temporary `.part` file, flushed to disk, and only then given their final name, so a stored file is never half-written.
+  - A stored file can never be overwritten: the final name is created with `os.link`, which fails if anything already exists there.
+  - Files are read-only (mode 440) in private folders (mode 750), owned by an unprivileged `app` user in Docker.
+  - Storage paths come from a generated UUID, never the uploaded file name, and any path that resolves outside the storage folder (`../`, absolute paths, symlinks) is rejected.
+  - Downloads are sent with `X-Content-Type-Options: nosniff`. Non-PDF files are also sent with `Content-Security-Policy: sandbox`, so a browser won't run scripts from them.
+  - A SHA-256 hash is recorded at upload and used for duplicate detection; it is not re-checked when a file is read.
+- **Rate limiting** (`app/api/rate_limit.py`): each client IP gets 600 requests a minute, and at most 20 uploads or retries a minute, since those start OCR and paid AI calls. Requests over the limit get `429 Too Many Requests` with a `Retry-After` header before the request body is read. Limits are configurable (`RATE_LIMIT_*`); `/health` is exempt.
 - All input is validated by Pydantic. Database access goes through SQLAlchemy with bound parameters.
 - Error responses never expose stack traces or internal details. Diagnostics go to server logs only.
 - Secrets come only from environment variables; `.env` is gitignored.
@@ -517,9 +524,8 @@ The prompts below are rewritten for clarity, keeping the intent of the original 
 
 **Not yet implemented:**
 - authentication and authorisation (every user can see and change all documents)
-- rate limiting
 
-These would be the first additions before production use.
+This would be the first addition before production use. Rate limits are kept in memory per API process, so with several API instances each one enforces its own limit; a shared Redis-backed limiter would be the next step there.
 
 **Performance and scalability:**
 - The API is stateless, and all heavy work runs in Celery workers.

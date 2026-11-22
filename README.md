@@ -132,6 +132,8 @@ The variables you usually need to change:
 | `SEMANTIC_SEARCH_ENABLED` | `true` | Set to `false` to skip embeddings; keyword search still works. |
 | `INVOICE_EXTRACTION_ENABLED` | `true` | Set to `false` to run without an Anthropic key. Text extraction, OCR and search still work, but no invoice fields are extracted. |
 | `LLM_MODEL` / `LLM_EFFORT` | `claude-opus-5-5` / `medium` | The Claude model and effort level used for extraction. |
+| `RATE_LIMIT_PER_MINUTE` / `RATE_LIMIT_PROCESSING_PER_MINUTE` | `600` / `20` | Requests per minute per client IP, and the smaller limit for uploads and retries. `RATE_LIMIT_ENABLED=false` turns limiting off. |
+| `RATE_LIMIT_TRUSTED_PROXY_HOPS` | `0` | How many reverse proxies in front of the API add to `X-Forwarded-For`. Leave at `0` when clients connect directly. Behind proxies, set it to the number of proxies, or every user will share one limit. |
 
 **After editing `.env`:**
 - Restart the API, worker and beat; settings are read once at startup.
@@ -314,9 +316,9 @@ Main endpoints:
 
 ```bash
 # Backend (from backend/)
-uv run pytest                      # 674 tests; PostgreSQL and real-embedding tests are skipped
+uv run pytest                      # 701 tests; PostgreSQL and real-embedding tests are skipped
 TEST_POSTGRES_URL=postgresql+asyncpg://docis:docis@localhost:5434/docis_test \
-RUN_EMBEDDING_TESTS=1 uv run pytest  # full suite: 696 tests
+RUN_EMBEDDING_TESTS=1 uv run pytest  # full suite: 723 tests
 
 # Frontend (from frontend/)
 npm run test
@@ -327,7 +329,7 @@ Latest results:
 
 | Suite | Result |
 |---|---|
-| Backend | 696 passed, 0 failed, 99.74% coverage |
+| Backend | 723 passed, 0 failed, 99.74% coverage |
 | Frontend | 89 passed in 15 files |
 
 ## Evaluation

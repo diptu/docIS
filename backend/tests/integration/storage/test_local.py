@@ -1,4 +1,5 @@
 import io
+import os
 import stat
 from pathlib import Path
 
@@ -48,6 +49,29 @@ async def test_save_never_overwrites(tmp_path: Path) -> None:
     assert not list(tmp_path.glob("*.part"))
 
 
+async def test_a_file_appearing_during_the_commit_is_not_overwritten(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A concurrent writer creates the key in the middle of the commit,
+    after any existence check could have run: the commit must fail rather
+    than replace that file."""
+    storage = LocalStorage(tmp_path)
+    chmod = Path.chmod
+
+    def chmod_then_race(self: Path, mode: int) -> None:
+        chmod(self, mode)
+        if self.suffix == ".part":
+            (tmp_path / "file.pdf").write_bytes(b"other")
+
+    monkeypatch.setattr(Path, "chmod", chmod_then_race)
+
+    with pytest.raises(FileExistsError, match="Refusing to overwrite"):
+        await storage.save(upload(b"mine"), "file.pdf", max_bytes=100)
+
+    assert (tmp_path / "file.pdf").read_bytes() == b"other"
+    assert not list(tmp_path.glob("*.part"))
+
+
 async def test_save_over_limit_leaves_nothing(tmp_path: Path) -> None:
     storage = LocalStorage(tmp_path)
 
@@ -76,6 +100,32 @@ async def test_failed_verification_leaves_nothing(tmp_path: Path) -> None:
 def test_keys_outside_root_are_rejected(tmp_path: Path, key: str) -> None:
     with pytest.raises(ValueError, match="Invalid storage key"):
         LocalStorage(tmp_path / "root")._resolve(key)
+
+
+def test_symlinks_cannot_lead_outside_the_root(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (root / "link").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="Invalid storage key"):
+        LocalStorage(root).path_for("link/secret.pdf")
+
+
+@pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0,
+    reason="root ignores file permissions",
+)
+async def test_stored_files_cannot_be_modified_by_the_app_user(
+    tmp_path: Path,
+) -> None:
+    storage = LocalStorage(tmp_path)
+    stored = await storage.save(upload(b"data"), "file.pdf", max_bytes=10)
+
+    with pytest.raises(PermissionError):
+        storage.path_for(stored.key).write_bytes(b"tampered")
+    assert (tmp_path / "file.pdf").read_bytes() == b"data"
 
 
 async def test_every_created_directory_is_private(tmp_path: Path) -> None:

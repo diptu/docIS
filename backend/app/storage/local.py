@@ -49,11 +49,20 @@ def _fsync_dir(path: Path) -> None:
 
 
 def _commit(partial: Path, target: Path) -> None:
-    """Make the verified partial file read-only and move it into place."""
-    if target.exists():
-        raise FileExistsError(f"Refusing to overwrite stored file: {target.name}")
+    """Make the verified partial file read-only and move it into place.
+
+    ``os.link`` creates the final name only if nothing exists there, in one
+    step. ``rename`` would silently replace an existing file on POSIX, and
+    checking first would leave a gap for a concurrent save to slip into.
+    """
     partial.chmod(FILE_MODE)
-    partial.rename(target)
+    try:
+        os.link(partial, target)
+    except FileExistsError:
+        raise FileExistsError(
+            f"Refusing to overwrite stored file: {target.name}"
+        ) from None
+    partial.unlink()
     _fsync_dir(target.parent)
 
 

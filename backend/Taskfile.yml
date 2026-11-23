@@ -172,6 +172,27 @@ tasks:
     cmds:
       - uv run pytest -m postgres --no-cov {{.CLI_ARGS}}
 
+  test-report:
+    desc: Full test run for the deliverables (every opt-in test, backend + frontend); saves reports in test-results/ and prints a Markdown summary
+    env:
+      TEST_POSTGRES_URL: '{{.TEST_POSTGRES_URL | default "postgresql+asyncpg://docis:docis@localhost:5434/docis_test"}}'
+      RUN_EMBEDDING_TESTS: "1"
+    cmds:
+      - mkdir -p test-results ../frontend/test-results
+      - >-
+        uv run pytest
+        --junitxml=test-results/backend-junit.xml
+        --cov=app --cov-report=term
+        --cov-report=xml:test-results/coverage.xml
+        --cov-report=html:test-results/coverage-html
+      - cd ../frontend && npx vitest run --reporter=default --reporter=junit --outputFile.junit=test-results/frontend-junit.xml
+      - uv run python scripts/test_report.py
+
+  pdf:
+    desc: Convert deliverables.md (repository root) to deliverables.pdf, with Mermaid diagrams drawn (needs mmdc, pandoc and Chrome)
+    cmds:
+      - sh scripts/deliverables-pdf.sh {{.CLI_ARGS}}
+
   # ==========================================
   # EXTRACTION ACCURACY (T4.2)
   # ==========================================

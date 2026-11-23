@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>docIS Evaluation Report</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@500;600&display=swap">
+<style>
+/* Layout: single reading column, summary table first, then breakdowns as ruled sections */
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --fg: #16202b;
+  --muted: #5a6675;
+  --line: #dde2e8;
+  --accent: #1f5fa8;
+  --track: #e7ebf0;
+  --good: #1d7a4a;
+  --warn: #a35b00;
+  --bad: #b3261e;
+  --warn-bg: #fff4e3;
+  --font-display: "Space Grotesk", "IBM Plex Sans", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f141a; --surface: #161d25; --fg: #e3e8ee; --muted: #93a0b0; --line: #2a3440;
+    --accent: #6fa8e8; --track: #232c37; --good: #5cc68e; --warn: #f0a646; --bad: #f2827a; --warn-bg: #2a2114;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f141a; --surface: #161d25; --fg: #e3e8ee; --muted: #93a0b0; --line: #2a3440;
+  --accent: #6fa8e8; --track: #232c37; --good: #5cc68e; --warn: #f0a646; --bad: #f2827a; --warn-bg: #2a2114;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; }
+body {
+  background: var(--bg); color: var(--fg);
+  font: 15px/1.6 var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 64px;
+}
+main { max-width: 860px; margin: 0 auto; display: grid; gap: 40px; }
+header { display: grid; gap: 8px; }
+.eyebrow { font: 500 12px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+h1 { font: 600 34px/1.15 var(--font-display); margin: 0; text-wrap: balance; letter-spacing: -.01em; }
+h2 { font: 600 20px/1.3 var(--font-display); margin: 0 0 4px; text-wrap: balance; }
+p { margin: 0; max-width: 68ch; }
+.lede { color: var(--muted); }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 20px; font: 13px/1.5 var(--font-mono); color: var(--muted); margin-top: 6px; }
+.meta b { color: var(--fg); font-weight: 500; }
+section { display: grid; gap: 14px; min-width: 0; }
+.note { color: var(--muted); font-size: 14px; }
+.callout {
+  background: var(--warn-bg); border: 1px solid var(--line); border-left: 3px solid var(--warn);
+  padding: 14px 16px; border-radius: 6px; display: grid; gap: 6px; font-size: 14px;
+}
+.callout strong { color: var(--warn); }
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+th { font: 500 12px/1.3 var(--font-mono); letter-spacing: .05em; text-transform: uppercase; color: var(--muted); background: var(--bg); white-space: nowrap; }
+td.num { font-family: var(--font-mono); font-weight: 500; white-space: nowrap; }
+td.r, th.r { text-align: right; }
+td .sub { display: block; color: var(--muted); font-size: 13px; }
+.na { color: var(--muted); font-family: var(--font-mono); }
+.bars { display: grid; gap: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px; }
+.bar-row { display: grid; grid-template-columns: 110px 1fr 64px; align-items: center; gap: 12px; font-size: 14px; }
+.bar-row .label { min-width: 0; }
+.bar-row .label small { display: block; color: var(--muted); font: 12px/1.2 var(--font-mono); }
+.track { height: 12px; background: var(--track); border-radius: 3px; overflow: hidden; }
+.fill { height: 100%; background: var(--accent); border-radius: 3px; }
+.fill.low { background: var(--bad); }
+.fill.mid { background: var(--warn); }
+.bar-row .val { font: 500 13px/1 var(--font-mono); text-align: right; }
+.bar-row.missing .track { background: repeating-linear-gradient(45deg, var(--track) 0 6px, transparent 6px 12px); }
+.pill { display: inline-block; font: 500 11px/1 var(--font-mono); padding: 4px 7px; border-radius: 999px; border: 1px solid currentColor; letter-spacing: .03em; white-space: nowrap; }
+.pill.good { color: var(--good); } .pill.warn { color: var(--warn); } .pill.bad { color: var(--bad); }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 24px; }
+.grid2 > * { min-width: 0; }
+footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 16px; }
+code { font-family: var(--font-mono); font-size: .92em; }
+@media (max-width: 480px) {
+  h1 { font-size: 27px; }
+  .bar-row { grid-template-columns: 88px 1fr 52px; gap: 8px; }
+  th, td { padding: 9px 10px; }
+}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="eyebrow">docIS · Invoice extraction evaluation</div>
+    <h1>Third-party dataset evaluation</h1>
+    <p class="lede">The full pipeline (text extraction, OCR, extraction with Claude Opus 5.5, normalisation) run on 181 labelled third-party invoices and scored field by field against ground truth. The amount checks were scored separately against injected errors.</p>
+    <div class="meta">
+      <span>Extraction run <b>23 Nov 2026, 15:43</b></span>
+      <span>Validation run <b>23 Nov 2026, 20:30</b></span>
+      <span>Model <b>Claude Opus 5.5</b> (<code>claude-opus-5-5</code>, medium effort)</span>
+      <span>API cost <b>$3.98</b></span>
+    </div>
+  </header>
+
+  <div class="callout" role="note">
+    <strong>Full run on the current code: 180 of 181 documents extracted</strong>
+    <span>Every document went through the pipeline. One failed: in <code>scan-fax-moderate</code> the connection dropped during the API call (<code>ReadError</code>), which production retries automatically. Accuracy figures cover the 180 documents that were extracted. The run used the current code.</span>
+  </div>
+
+  <section aria-labelledby="h-summary">
+    <h2 id="h-summary">Measured evaluation results</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Metric</th><th class="r">Actual result</th></tr></thead>
+        <tbody>
+          <tr><td>Number of evaluated documents<span class="sub">180 extracted by Claude Opus 5.5</span></td><td class="num r">181</td></tr>
+          <tr><td>Field-level extraction accuracy<span class="sub">1,651 of 1,745 header fields</span></td><td class="num r">94.6%</td></tr>
+          <tr><td>Exact invoice accuracy<span class="sub">every field and line item correct</span></td><td class="num r">80.6%</td></tr>
+          <tr><td>Hallucination rate<span class="sub">values invented for absent fields</span></td><td class="num r">0.0%</td></tr>
+          <tr><td>Average processing time</td><td class="num r">8.70 s</td></tr>
+          <tr><td>Median processing time</td><td class="num r">5.80 s</td></tr>
+          <tr><td>Document success rate<span class="sub">180 of 181</span></td><td class="num r">99.4%</td></tr>
+          <tr><td>Document failure rate<span class="sub">1 network error</span></td><td class="num r">0.6%</td></tr>
+          <tr><td>Validation precision<span class="sub">179 invoices, 860 injected errors</span></td><td class="num r">98.1%</td></tr>
+          <tr><td>Validation recall</td><td class="num r">99.7%</td></tr>
+          <tr><td>Cross-document reconciliation accuracy</td><td class="r" ><span class="na">Not evaluated here; see deliverables.md</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-cat">
+    <h2 id="h-cat">Field accuracy by document category</h2>
+    <p class="note">Clean, credit-note, freight, hard and multi-page invoices had every field correct, and scans and tax layouts nearly so. Handwritten documents account for most remaining mistakes.</p>
+    <div class="bars">
+      <div class="bar-row"><span class="label">Clean<small>31 docs</small></span><div class="track"><div class="fill" style="width:100%"></div></div><span class="val">100%</span></div>
+      <div class="bar-row"><span class="label">Credit notes<small>10 docs</small></span><div class="track"><div class="fill" style="width:100%"></div></div><span class="val">100%</span></div>
+      <div class="bar-row"><span class="label">Freight<small>16 docs</small></span><div class="track"><div class="fill" style="width:100%"></div></div><span class="val">100%</span></div>
+      <div class="bar-row"><span class="label">Hard<small>13 docs</small></span><div class="track"><div class="fill" style="width:100%"></div></div><span class="val">100%</span></div>
+      <div class="bar-row"><span class="label">Multi-page<small>10 docs</small></span><div class="track"><div class="fill" style="width:100%"></div></div><span class="val">100%</span></div>
+      <div class="bar-row"><span class="label">Scan<small>14 of 15 docs</small></span><div class="track"><div class="fill" style="width:99.3%"></div></div><span class="val">99.3%</span></div>
+      <div class="bar-row"><span class="label">Tax layouts<small>14 docs</small></span><div class="track"><div class="fill" style="width:97.8%"></div></div><span class="val">97.8%</span></div>
+      <div class="bar-row"><span class="label">Currency<small>19 docs</small></span><div class="track"><div class="fill" style="width:91.5%"></div></div><span class="val">91.5%</span></div>
+      <div class="bar-row"><span class="label">Photo<small>45 docs</small></span><div class="track"><div class="fill" style="width:91.1%"></div></div><span class="val">91.1%</span></div>
+      <div class="bar-row"><span class="label">Handwritten<small>8 docs</small></span><div class="track"><div class="fill low" style="width:56.4%"></div></div><span class="val">56.4%</span></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-cat-table">
+    <h2 id="h-cat-table">Category detail</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Category</th><th class="r">Docs</th><th class="r">Exact invoice</th><th class="r">Field accuracy</th><th class="r">Median time</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td>Clean</td><td class="num r">31</td><td class="num r">100%</td><td class="num r">100%</td><td class="num r">5.04 s</td><td><span class="pill good">Strong</span></td></tr>
+          <tr><td>Credit notes</td><td class="num r">10</td><td class="num r">100%</td><td class="num r">100%</td><td class="num r">4.22 s</td><td><span class="pill good">Strong</span></td></tr>
+          <tr><td>Freight</td><td class="num r">16</td><td class="num r">100%</td><td class="num r">100%</td><td class="num r">5.38 s</td><td><span class="pill good">Strong</span></td></tr>
+          <tr><td>Hard</td><td class="num r">13</td><td class="num r">100%</td><td class="num r">100%</td><td class="num r">5.71 s</td><td><span class="pill good">Strong</span></td></tr>
+          <tr><td>Multi-page</td><td class="num r">10</td><td class="num r">100%</td><td class="num r">100%</td><td class="num r">35.03 s</td><td><span class="pill good">Strong</span></td></tr>
+          <tr><td>Scan</td><td class="num r">14</td><td class="num r">85.7%</td><td class="num r">99.3%</td><td class="num r">7.98 s</td><td><span class="pill good">Strong</span></td></tr>
+          <tr><td>Tax layouts</td><td class="num r">14</td><td class="num r">71.4%</td><td class="num r">97.8%</td><td class="num r">5.37 s</td><td><span class="pill good">Strong</span></td></tr>
+          <tr><td>Currency</td><td class="num r">19</td><td class="num r">68.4%</td><td class="num r">91.5%</td><td class="num r">4.89 s</td><td><span class="pill warn">Review</span></td></tr>
+          <tr><td>Photo</td><td class="num r">45</td><td class="num r">66.7%</td><td class="num r">91.1%</td><td class="num r">8.56 s</td><td><span class="pill warn">Review</span></td></tr>
+          <tr><td>Handwritten</td><td class="num r">8</td><td class="num r">0%</td><td class="num r">56.4%</td><td class="num r">10.88 s</td><td><span class="pill bad">Weak</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">Credit notes are fully correct (10 of 10), with amounts reported as positive magnitudes and <code>document_type</code> set to <code>credit_note</code>. On dual-currency invoices the model sometimes picks the other currency (for example EUR instead of NAD), and handwriting is misread by OCR, mostly in line amounts and descriptions.</p>
+  </section>
+
+  <div class="grid2">
+    <section aria-labelledby="h-fields">
+      <h2 id="h-fields">Accuracy by field</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Field</th><th class="r">Accuracy</th><th class="r">Wrong</th><th class="r">Missed</th></tr></thead>
+          <tbody>
+            <tr><td><code>document_type</code></td><td class="num r">100%</td><td class="num r">0</td><td class="num r">0</td></tr>
+            <tr><td><code>is_invoice</code></td><td class="num r">100%</td><td class="num r">0</td><td class="num r">0</td></tr>
+            <tr><td><code>vendor.name</code></td><td class="num r">97.2%</td><td class="num r">2</td><td class="num r">3</td></tr>
+            <tr><td><code>currency</code></td><td class="num r">96.6%</td><td class="num r">4</td><td class="num r">2</td></tr>
+            <tr><td><code>invoice_date</code></td><td class="num r">94.4%</td><td class="num r">1</td><td class="num r">9</td></tr>
+            <tr><td><code>due_date</code></td><td class="num r">92.8%</td><td class="num r">2</td><td class="num r">8</td></tr>
+            <tr><td><code>tax_amount</code></td><td class="num r">92.1%</td><td class="num r">4</td><td class="num r">10</td></tr>
+            <tr><td><code>total_amount</code></td><td class="num r">92.1%</td><td class="num r">7</td><td class="num r">7</td></tr>
+            <tr><td><code>subtotal</code></td><td class="num r">91.0%</td><td class="num r">9</td><td class="num r">7</td></tr>
+            <tr><td><code>invoice_number</code></td><td class="num r">89.3%</td><td class="num r">9</td><td class="num r">10</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note">Errors split into missed fields (56) and wrong values (38). No values were invented for fields the document did not contain (0% hallucination). The third-party labels have no customer name, so that field is extracted but not scored here.</p>
+    </section>
+
+    <section aria-labelledby="h-lines">
+      <h2 id="h-lines">Line items and reliability</h2>
+      <div class="table-wrap">
+        <table>
+          <tbody>
+            <tr><td>Line items expected</td><td class="num r">1,237</td></tr>
+            <tr><td>Line items extracted</td><td class="num r">1,224</td></tr>
+            <tr><td>Line-item precision</td><td class="num r">99.6%</td></tr>
+            <tr><td>Line-item recall</td><td class="num r">98.5%</td></tr>
+            <tr><td>Line-item F1</td><td class="num r">99.0%</td></tr>
+            <tr><td>Line field accuracy</td><td class="num r">97.6%</td></tr>
+            <tr><td>Extractions whose amounts add up</td><td class="num r">78.9%</td></tr>
+            <tr><td>Failures in content extraction</td><td class="num r">0</td></tr>
+            <tr><td>Failures in AI extraction<span class="sub">network read error</span></td><td class="num r">1</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <div class="grid2">
+    <section aria-labelledby="h-time">
+      <h2 id="h-time">Processing time</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Stage</th><th class="r">Mean</th><th class="r">Median</th><th class="r">p95</th></tr></thead>
+          <tbody>
+            <tr><td>Text extraction and OCR</td><td class="num r">0.30 s</td><td class="num r">0.02 s</td><td class="num r">1.00 s</td></tr>
+            <tr><td>Claude Opus 5.5 extraction</td><td class="num r">8.40 s</td><td class="num r">5.72 s</td><td class="num r">20.69 s</td></tr>
+            <tr><td><strong>Total</strong></td><td class="num r">8.70 s</td><td class="num r">5.80 s</td><td class="num r">20.72 s</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note">Almost all of the time is the model call. Multi-page documents have a 35 s median; the slowest single document took 58.8 s.</p>
+    </section>
+
+    <section aria-labelledby="h-val">
+      <h2 id="h-val">Amount-check validation</h2>
+      <div class="table-wrap">
+        <table>
+          <tbody>
+            <tr><td>Invoices checked</td><td class="num r">179</td></tr>
+            <tr><td>Injected errors</td><td class="num r">860</td></tr>
+            <tr><td>Detection rate</td><td class="num r">100%</td></tr>
+            <tr><td>Precision</td><td class="num r">98.1%</td></tr>
+            <tr><td>Recall</td><td class="num r">99.7%</td></tr>
+            <tr><td>F1</td><td class="num r">98.9%</td></tr>
+            <tr><td>Specificity</td><td class="num r">90.1%</td></tr>
+            <tr><td>False-alarm rate</td><td class="num r">9.5%</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note">This check does not call the model and runs on the ground truth, so it does not change with the extraction run. The 17 false alarms are mostly on the <code>total</code> check, on invoices with credits, freight or delivery charges, or fuel surcharges. Two account statements had no expectations file and were skipped.</p>
+      <p class="note">This test measures the arithmetic checks on correct and deliberately broken invoices. On the model's real extractions the review flags are noisier: 5 of the 7 documents that should have been flagged were caught, along with 33 false alarms (178 documents, 13.2% precision, 71.4% recall).</p>
+    </section>
+  </div>
+
+  <section aria-labelledby="h-ocr">
+    <h2 id="h-ocr">OCR on poor-quality images</h2>
+    <p class="note">How much of an invoice Tesseract reads from skewed, blurred, low-resolution, dark and noisy images, measured on 23 Nov 2026 on the current code. This is OCR only, with no model calls. A value counts as read when it appears in the OCR text: the invoice number, subtotal, tax, total and every line amount. Amounts are matched by number, so <code>1.234,56</code> matches <code>1,234.56</code>. Each defect group has two kinds of real photo or scan from the third-party dataset, each at mild, moderate and severe strength.</p>
+    <div class="bars">
+      <div class="bar-row"><span class="label">Dark<small>6 docs</small></span><div class="track"><div class="fill" style="width:100%"></div></div><span class="val">100%</span></div>
+      <div class="bar-row"><span class="label">Skew<small>6 docs</small></span><div class="track"><div class="fill" style="width:97.9%"></div></div><span class="val">97.9%</span></div>
+      <div class="bar-row"><span class="label">Noisy<small>6 docs</small></span><div class="track"><div class="fill" style="width:97.9%"></div></div><span class="val">97.9%</span></div>
+      <div class="bar-row"><span class="label">Low res<small>6 docs</small></span><div class="track"><div class="fill" style="width:89.6%"></div></div><span class="val">89.6%</span></div>
+      <div class="bar-row"><span class="label">Blur<small>6 docs</small></span><div class="track"><div class="fill low" style="width:35.4%"></div></div><span class="val">35.4%</span></div>
+    </div>
+    <p class="note">Values read from real documents, with image clean-up (what production runs).</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Defect</th><th>Real documents</th><th class="r">Mild</th><th class="r">Moderate</th><th class="r">Severe</th><th class="r">No clean-up</th><th class="r">Overall</th></tr></thead>
+        <tbody>
+          <tr><td>Skew</td><td><span class="sub">small rotation, wrong orientation</span></td><td class="num r">100%</td><td class="num r">100%</td><td class="num r">94%</td><td class="num r">66.7%</td><td class="num r"><strong>97.9%</strong></td></tr>
+          <tr><td>Blur</td><td><span class="sub">defocus, motion</span></td><td class="num r">81%</td><td class="num r">25%</td><td class="num r">0%</td><td class="num r">35.4%</td><td class="num r"><strong>35.4%</strong></td></tr>
+          <tr><td>Low resolution</td><td><span class="sub">low resolution, heavy JPEG</span></td><td class="num r">100%</td><td class="num r">88%</td><td class="num r">81%</td><td class="num r">89.6%</td><td class="num r"><strong>89.6%</strong></td></tr>
+          <tr><td>Dark</td><td><span class="sub">low light, shadow</span></td><td class="num r">100%</td><td class="num r">100%</td><td class="num r">100%</td><td class="num r">66.7%</td><td class="num r"><strong>100%</strong></td></tr>
+          <tr><td>Noisy</td><td><span class="sub">noisy scan, fax</span></td><td class="num r">100%</td><td class="num r">100%</td><td class="num r">94%</td><td class="num r">97.9%</td><td class="num r"><strong>97.9%</strong></td></tr>
+          <tr><td>All photos</td><td><span class="sub">45 docs, 360 values</span></td><td class="na r">—</td><td class="na r">—</td><td class="na r">—</td><td class="num r">73.1%</td><td class="num r"><strong>86.1%</strong></td></tr>
+          <tr><td>All OCR documents</td><td><span class="sub">68 photos, scans and handwritten, 535 values</span></td><td class="na r">—</td><td class="na r">—</td><td class="na r">—</td><td class="num r">73.1%</td><td class="num r"><strong>81.9%</strong></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note"><em>Mild</em>, <em>Moderate</em> and <em>Severe</em> are with clean-up, at each strength of the defect. <em>No clean-up</em> is Tesseract on the raw image. <em>Overall</em> is with clean-up, across all strengths. Every document is read: no document comes out with empty OCR text, and the most tilted photo (<code>photo-rotate-small-severe</code>) gives 15 of 16 values.</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Defect (synthetic)</th><th>Severity</th><th class="r">No clean-up</th><th class="r">With clean-up</th><th class="r">Confidence</th></tr></thead>
+        <tbody>
+          <tr><td>Skew</td><td>2° / 5° / 10° / 15°</td><td class="num r">100 / 67 / 0 / 0%</td><td class="num r"><strong>100 / 100 / 100 / 100%</strong></td><td class="num r">95</td></tr>
+          <tr><td>Blur</td><td>radius 1 / 2 / 3 px</td><td class="num r">100 / 100 / 100%</td><td class="num r"><strong>100 / 100 / 100%</strong></td><td class="num r">94 / 94 / 83</td></tr>
+          <tr><td>Low resolution</td><td>100 / 70 / 50 DPI</td><td class="num r">100 / 100 / 100%</td><td class="num r"><strong>100 / 100 / 100%</strong></td><td class="num r">94 / 94 / 85</td></tr>
+          <tr><td>Dark</td><td>60 / 40 / 25% light</td><td class="num r">100 / 100 / 100%</td><td class="num r"><strong>100 / 100 / 100%</strong></td><td class="num r">95</td></tr>
+          <tr><td>Noisy</td><td>grain σ 10 / 20 / 35</td><td class="num r">100 / 100 / 50%</td><td class="num r"><strong>100 / 100 / 50%</strong></td><td class="num r">95 / 95 / 47</td></tr>
+          <tr><td>Dark + noisy</td><td>60%·σ10 / 45%·σ18 / 35%·σ25</td><td class="num r">100 / 0 / 0%</td><td class="num r"><strong>100 / 100 / 100%</strong></td><td class="num r">95</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">Generated invoice pages with one defect at a time, so the severity at which reading breaks down is visible. Sparse pages (a few lines, like a receipt) and dense pages (with line items) are pooled; 6 key values per page. Confidence is Tesseract's mean word confidence with clean-up (0–100).</p>
+
+    <div class="callout" role="note">
+      <strong>Where OCR still struggles</strong>
+      <span><b>Blur</b> is the weak spot on real photos. Synthetic blur up to a 3-pixel radius is still read, but real motion and defocus blur lose 75% of the values at moderate strength and all of them when severe, and the clean-up does not sharpen. <b>Very heavy grain</b> on white paper (σ 35) loses half the values. Handwritten invoices remain at 16%. Documents that are read poorly get low OCR confidence and are flagged for manual review (below 80).</span>
+    </div>
+  </section>
+
+  <footer>
+    Source: <code>backend/evaluation/third_party_eval/results/</code> (extraction_results.json, validation_results.json, ocr_preprocessing.json). Regenerate the extraction figures with <code>task eval-3p</code> (about $4 in API calls) and the OCR figures with <code>task eval-3p-ocr</code> (free, no model calls). Cross-document reconciliation is implemented in <code>app/compare/</code>, but this evaluation does not score it.
+  </footer>
+</main>
+</body>
+</html>

@@ -1,0 +1,10 @@
+
+Error: spawn Unknown system error -86
+    at ChildProcess.spawn (node:internal/child_process:420:11)
+    at Object.spawn (node:child_process:787:9)
+    at new Process (file:///Users/macbook/.nvm/versions/node/v22.23.1/lib/node_modules/mermaid-filter/node_modules/@puppeteer/browsers/lib/esm/launch.js:134:76)
+    at launch (file:///Users/macbook/.nvm/versions/node/v22.23.1/lib/node_modules/mermaid-filter/node_modules/@puppeteer/browsers/lib/esm/launch.js:72:12)
+    at ChromeLauncher.launch (file:///Users/macbook/.nvm/versions/node/v22.23.1/lib/node_modules/mermaid-filter/node_modules/puppeteer-core/lib/esm/puppeteer/node/ProductLauncher.js:64:32)
+    at async run (file:///Users/macbook/.nvm/versions/node/v22.23.1/lib/node_modules/mermaid-filter/node_modules/@mermaid-js/mermaid-cli/src/index.js:416:19)
+    at async cli (file:///Users/macbook/.nvm/versions/node/v22.23.1/lib/node_modules/mermaid-filter/node_modules/@mermaid-js/mermaid-cli/src/index.js:192:3)
+

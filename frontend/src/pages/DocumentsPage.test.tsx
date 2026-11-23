@@ -139,7 +139,7 @@ it("explains a temporary outage once, in plain language", async () => {
     expect(alertTexts()).toEqual(
       expect.arrayContaining([
         "We couldn't load the statistics. Try again",
-        "We couldn't load your documents. The service is temporarily unavailable. Please try again in a moment. Try again",
+        "We couldn't load your documents. The service is temporarily unavailable. Please try again in a moment. We'll keep trying automatically. Try again",
       ]),
     ),
   );

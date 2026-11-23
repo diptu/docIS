@@ -10,13 +10,16 @@ interface LoadErrorProps {
   brief?: boolean;
 }
 
-/** A friendly "couldn't load" message with a Try again button. */
+/** A friendly "couldn't load" message with a Try again button. During a
+ * temporary outage the page reloads by itself once the service is back
+ * (see ``api/recovery``), and the message says so. */
 export function LoadError({ what, error, onRetry, retrying, brief = false }: LoadErrorProps) {
   const temporary = error instanceof ApiError && error.transient;
   return (
     <span role="alert" className="text-red-700">
       <span className="font-medium">We couldn't load {what}.</span>
-      {!(brief && temporary) && <> {error.message}</>}{" "}
+      {!(brief && temporary) && <> {error.message}</>}
+      {temporary && !brief && <> We'll keep trying automatically.</>}{" "}
       <button
         type="button"
         onClick={onRetry}

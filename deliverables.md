@@ -31,14 +31,14 @@ The web interface lets users:
 
 | Task | Requirement | Where it is implemented |
 |---|---|---|
-| 1 | PDF, JPG, PNG, TIFF, XLSX, XLS, CSV; multi-page; multiple sheets; poor quality; corrupted files | `app/services/file_types.py`, `app/processing/` |
-| 2 | Invoice number, date, supplier, customer, subtotal, tax, total, currency, line items as JSON; no invented values | `app/extraction/llm.py`, `schema.py`, `normalize.py` |
-| 3 | Missing fields, wrong numbers, duplicates, subtotal/tax/lines/total consistency; manual-review flags | `app/extraction/validation.py`, `review.py` |
-| 4 | REST APIs for upload, status, results, search, corrections, reprocessing; background jobs | `app/api/routes/`, `app/worker/` |
-| 5 | Metadata, text, structured results, validation errors, processing history; keyword + semantic search | `app/models/`, `app/search/` |
-| 6 | React UI: upload, progress, inspect, review errors, correct, search | `frontend/src/pages/` |
-| 7 | Automated tests + evaluation on a labelled dataset | `backend/tests/`, `frontend/src/**/*.test.tsx`, `backend/evaluation/` |
-| Scenario | PDF↔PDF and PDF↔Excel cross-verification | `app/compare/`, `GET /compare` |
+| 1 | PDF, JPG, PNG, TIFF, XLSX, XLS, CSV; multi-page; multiple sheets; poor quality; corrupted files | [`backend/app/services/file_types.py`](https://github.com/diptu/docIS/blob/main/backend/app/services/file_types.py), [`backend/app/services/validators.py`](https://github.com/diptu/docIS/blob/main/backend/app/services/validators.py), [`backend/app/processing/`](https://github.com/diptu/docIS/tree/main/backend/app/processing) (OCR: [`ocr.py`](https://github.com/diptu/docIS/blob/main/backend/app/processing/ocr.py), [`image_prep.py`](https://github.com/diptu/docIS/blob/main/backend/app/processing/image_prep.py); sheets: [`spreadsheets.py`](https://github.com/diptu/docIS/blob/main/backend/app/processing/spreadsheets.py)) |
+| 2 | Invoice number, date, supplier, customer, subtotal, tax, total, currency, line items as JSON; no invented values | [`backend/app/extraction/llm.py`](https://github.com/diptu/docIS/blob/main/backend/app/extraction/llm.py), [`schema.py`](https://github.com/diptu/docIS/blob/main/backend/app/extraction/schema.py), [`normalize.py`](https://github.com/diptu/docIS/blob/main/backend/app/extraction/normalize.py), [`chunked.py`](https://github.com/diptu/docIS/blob/main/backend/app/extraction/chunked.py) |
+| 3 | Missing fields, wrong numbers, duplicates, subtotal/tax/lines/total consistency; manual-review flags | [`backend/app/extraction/validation.py`](https://github.com/diptu/docIS/blob/main/backend/app/extraction/validation.py), [`review.py`](https://github.com/diptu/docIS/blob/main/backend/app/extraction/review.py) |
+| 4 | REST APIs for upload, status, results, search, corrections, reprocessing; background jobs | [`backend/app/api/routes/`](https://github.com/diptu/docIS/tree/main/backend/app/api/routes), [`backend/app/worker/`](https://github.com/diptu/docIS/tree/main/backend/app/worker) |
+| 5 | Metadata, text, structured results, validation errors, processing history; keyword + semantic search | [`backend/app/models/`](https://github.com/diptu/docIS/tree/main/backend/app/models), [`backend/migrations/`](https://github.com/diptu/docIS/tree/main/backend/migrations), [`backend/app/search/`](https://github.com/diptu/docIS/tree/main/backend/app/search) |
+| 6 | React UI: upload, progress, inspect, review errors, correct, search | [`frontend/src/pages/`](https://github.com/diptu/docIS/tree/main/frontend/src/pages) |
+| 7 | Automated tests + evaluation on a labelled dataset | [`backend/tests/`](https://github.com/diptu/docIS/tree/main/backend/tests), frontend tests (`*.test.tsx` files) in [`frontend/src/`](https://github.com/diptu/docIS/tree/main/frontend/src), [`backend/evaluation/`](https://github.com/diptu/docIS/tree/main/backend/evaluation) |
+| Scenario | PDF↔PDF and PDF↔Excel cross-verification | [`backend/app/compare/`](https://github.com/diptu/docIS/tree/main/backend/app/compare), [`backend/app/api/routes/compare.py`](https://github.com/diptu/docIS/blob/main/backend/app/api/routes/compare.py) (`GET /compare`) |
 
 ## 2. Submission Deliverables
 
@@ -52,13 +52,17 @@ The repository contains:
 - database migrations
 - automated tests
 - the evaluation harness
-- deployment configuration (`backend/compose.yaml`, `render.yaml`, `frontend/vercel.json`)
+- deployment configuration (`backend/compose.yaml`, `render.yaml`, `frontend/vercel.json`, and `deploy/` for running the published images)
+
+Docker images: https://hub.docker.com/r/diptu/docis/tags (`backend`, `frontend` and `db`, for `linux/amd64` and `linux/arm64`).
 - documentation
 
 ### Deliverable 2 — README and Setup Instructions
 
-[`README.md`](README.md) documents:
+[`README.md`](https://github.com/diptu/docIS/blob/main/README.md) documents:
+
 - Project overview, features and technology stack.
+- A quick start for Ubuntu from the Docker Hub images: install Docker, download one compose file, put the Anthropic API key in `.env`, and run `docker compose up -d`. PostgreSQL with pgvector, Redis and the database tables are set up automatically; no source code needed.
 - Prerequisites, including Tesseract, Docker and an Anthropic API key.
 - How to create and update `backend/.env`, with a table of the main variables and what to do after changing them.
 - PostgreSQL + pgvector setup: Docker, native Homebrew/apt, or hosted; enabling the extension, migrations, verification and troubleshooting.
@@ -70,11 +74,13 @@ The repository contains:
 
 ### Deliverable 3 — Architecture Diagram and Database Schema
 
-The full documents are [`backend/docs/architecture.md`](backend/docs/architecture.md) and [`backend/docs/database_schema.md`](backend/docs/database_schema.md).
+The full documents are [`backend/docs/architecture.md`](https://github.com/diptu/docIS/blob/main/backend/docs/architecture.md) and [`backend/docs/database_schema.md`](https://github.com/diptu/docIS/blob/main/backend/docs/database_schema.md). All diagrams and their sources are in [`backend/docs/`](https://github.com/diptu/docIS/tree/main/backend/docs). [`pipeline_infographic.html`](https://github.com/diptu/docIS/blob/main/pipeline_infographic.html), in the repository root, shows how each file type (PDF, image, spreadsheet) travels from upload to a validated invoice. It is a standalone page: download it and open it in any browser.
 
 #### 3.1 High-level architecture
 
 ![System architecture](backend/docs/system_architecture.png)
+
+Diagram: [`backend/docs/system_architecture.png`](https://github.com/diptu/docIS/blob/main/backend/docs/system_architecture.png) · Graphviz source: [`system_architecture.dot`](https://github.com/diptu/docIS/blob/main/backend/docs/system_architecture.dot)
 
 ```mermaid
 flowchart LR
@@ -94,6 +100,8 @@ flowchart LR
 #### 3.2 Processing pipeline
 
 ![Processing pipeline](backend/docs/processing_pipeline.png)
+
+Diagram: [`backend/docs/processing_pipeline.png`](https://github.com/diptu/docIS/blob/main/backend/docs/processing_pipeline.png) · Graphviz source: [`processing_pipeline.dot`](https://github.com/diptu/docIS/blob/main/backend/docs/processing_pipeline.dot) · Code: [`backend/app/processing/`](https://github.com/diptu/docIS/tree/main/backend/app/processing), [`backend/app/worker/`](https://github.com/diptu/docIS/tree/main/backend/app/worker)
 
 ```mermaid
 flowchart TD
@@ -115,6 +123,8 @@ flowchart TD
 
 ![Entity relationship diagram](backend/docs/database_schema.png)
 
+Diagram: [`backend/docs/database_schema.png`](https://github.com/diptu/docIS/blob/main/backend/docs/database_schema.png) · Graphviz source: [`database_schema.dot`](https://github.com/diptu/docIS/blob/main/backend/docs/database_schema.dot) · Migrations: [`backend/migrations/versions/`](https://github.com/diptu/docIS/tree/main/backend/migrations/versions)
+
 ```mermaid
 erDiagram
     DOCUMENTS ||--o{ DOCUMENT_PAGES : "has pages"
@@ -127,16 +137,18 @@ erDiagram
     DOCUMENTS ||--o{ INVOICE_CORRECTIONS : "corrected by"
 ```
 
-| Table | Stores |
-|---|---|
-| `documents` | File metadata, storage path, SHA-256, status |
-| `document_pages` | Extracted text per page, method (text layer / OCR), OCR confidence |
-| `document_sheets` | Parsed spreadsheet grids (JSONB) per sheet |
-| `document_chunks` | Search chunks: GIN full-text index + 384-d pgvector embedding (HNSW) |
-| `processing_jobs` | Processing history: stage, progress, attempts, errors, heartbeat |
-| `invoices`, `invoice_line_items` | Structured extraction results (exact `NUMERIC` amounts), model and token usage |
-| `validation_errors` | Review issues with severity and resolved state |
-| `invoice_corrections` | Audit trail of manual corrections (`{field: {old, new}}`) |
+| Table | Stores | Defined in |
+|---|---|---|
+| `documents` | File metadata, storage path, SHA-256, status | [`document.py`](https://github.com/diptu/docIS/blob/main/backend/app/models/document.py) |
+| `document_pages` | Extracted text per page, method (text layer / OCR), OCR confidence | [`document_page.py`](https://github.com/diptu/docIS/blob/main/backend/app/models/document_page.py) |
+| `document_sheets` | Parsed spreadsheet grids (JSONB) per sheet | [`document_sheet.py`](https://github.com/diptu/docIS/blob/main/backend/app/models/document_sheet.py) |
+| `document_chunks` | Search chunks: GIN full-text index + 384-d pgvector embedding (HNSW) | [`document_chunk.py`](https://github.com/diptu/docIS/blob/main/backend/app/models/document_chunk.py) |
+| `processing_jobs` | Processing history: stage, progress, attempts, errors, heartbeat | [`processing_job.py`](https://github.com/diptu/docIS/blob/main/backend/app/models/processing_job.py) |
+| `invoices`, `invoice_line_items` | Structured extraction results (exact `NUMERIC` amounts), model and token usage | [`invoice.py`](https://github.com/diptu/docIS/blob/main/backend/app/models/invoice.py) |
+| `validation_errors` | Review issues with severity and resolved state | [`invoice.py`](https://github.com/diptu/docIS/blob/main/backend/app/models/invoice.py) |
+| `invoice_corrections` | Audit trail of manual corrections (`{field: {old, new}}`) | [`invoice.py`](https://github.com/diptu/docIS/blob/main/backend/app/models/invoice.py) |
+
+All models are in [`backend/app/models/`](https://github.com/diptu/docIS/tree/main/backend/app/models).
 
 #### 3.4 Technology decisions
 
@@ -402,43 +414,51 @@ An offline harness, separate from the application:
 - Document list and processing states.
 - Invoice display and corrections, including the document-type selector and the credit-note badge.
 - Search, comparison, empty states and API failures.
+- Automatic recovery after a temporary outage (the page reloads by itself once the service is back).
 
 **Results** (final run, 23 November 2026):
 
 | Suite | Collected | Passed | Failed | Skipped | Coverage | Time |
 |---|---|---|---|---|---|---|
-| Backend (pytest) | 810 | 810 | 0 | 0 | 99.77% | 49.04 s |
-| Frontend (Vitest) | 92 tests in 15 files | 92 | 0 | 0 | n/a | 2.86 s |
+| Backend (pytest) | 851 | 851 | 0 | 0 | 99.74% | 76.02 s |
+| Frontend (Vitest) | 96 tests in 16 files | 96 | 0 | 0 | n/a | 3.33 s |
 
-The backend run includes the PostgreSQL integration tests (`TEST_POSTGRES_URL`) and the real embedding-model tests (`RUN_EMBEDDING_TESTS=1`). Without them, `uv run pytest` runs 788 tests and skips 22. Linting (ruff) and type checking (mypy for the backend, `tsc` for the frontend) also pass.
+Backend tests by layer:
+
+| Layer | Tests | Passed |
+|---|---|---|
+| Unit (pure logic) | 417 | 417 |
+| API (HTTP layer) | 147 | 147 |
+| Integration (OCR, files, worker, PostgreSQL, embeddings) | 217 | 217 |
+| End to end (whole app, in-process worker) | 70 | 70 |
+
+The backend run includes the PostgreSQL integration tests (`TEST_POSTGRES_URL`) and the real embedding-model tests (`RUN_EMBEDDING_TESTS=1`). Without them, `uv run pytest` runs 829 tests and skips 22. Linting (ruff) and type checking (mypy for the backend, `tsc` for the frontend) also pass.
+
+**How to reproduce:** from `backend/`, with PostgreSQL running, run `task test-report`. It runs both suites with every opt-in test switched on and saves the evidence:
+- `backend/test-results/backend-junit.xml`: every backend test and its outcome
+- `backend/test-results/coverage.xml` and `coverage-html/index.html`: line coverage per file
+- `frontend/test-results/frontend-junit.xml`: every frontend test
+- `backend/test-results/summary.md`: the tables above, ready to paste
+
+The command fails if any test fails.
 
 ### Deliverable 7 — Evaluation Report
 
-**Evaluation report:** https://claude.ai/artifact/9Gt91uQ692xuoSpcq5h7Me
+**Evaluation report:** [`evaluation_report.html`](evaluation_report.html), a standalone page in the repository root. Download it and open it in any browser; no account or login needed.
+
 The JSON results and HTML report can be regenerated with `task eval-3p-validate`, `task eval-3p` and `task eval-report`. They are written to `backend/evaluation/third_party_eval/results/`.
 
 #### Task 7 status
 
 | Task 7 requirement | Status | Where |
 |---|---|---|
-| Automated tests: document processing, OCR, spreadsheet parsing, AI extraction, validation, API endpoints, failure scenarios | Done: 810 backend and 92 frontend tests, all passing | Deliverable 6 |
+| Automated tests: document processing, OCR, spreadsheet parsing, AI extraction, validation, API endpoints, failure scenarios | Done: 851 backend and 96 frontend tests, all passing | Deliverable 6 |
 | Evaluation on a labelled dataset | Done: 181 labelled third-party documents with Claude Opus 5.5; 102 labelled comparison pairs | Dataset, *Cross-document comparison* |
-| Actual extraction accuracy | 87.5% of fields correct; 65.9% of invoices fully correct; 0% invented values | Measured results |
-| Processing time | 10.31 s average, 7.01 s median per document | Measured results |
-| Document success and failure rate | 98.9% / 1.1% (2 of 181) | Measured results |
+| Actual extraction accuracy | 94.6% of fields correct; 80.6% of invoices fully correct; 0% invented values | Measured results |
+| Processing time | 8.70 s average, 5.80 s median per document | Measured results |
+| Document success and failure rate | 99.4% / 0.6% (1 of 181, a dropped network connection) | Measured results |
 
-**Which code these numbers measure.** The 181-document extraction run (22 November 2026) was made before these later changes:
-- image clean-up before OCR;
-- the credit-note classification and sign convention;
-- splitting long documents into parts;
-- the prompt changes that came with them.
-
-Since then, only targeted checks have been run on the current code:
-- **Credit notes:** 10 of 10 fully correct, up from 0 of 10.
-- **OCR:** 81.3% of known values found in the OCR text, up from 70.3%. After the 23 November fix for dark, grainy pages: 81.9%, with dark photos at 100% and skew and noise at 97.9% (see *OCR on poor-quality images*).
-- **Long documents:** split and merged extraction matched one-call results on every invoice that ran.
-
-Those checks are reported in their own sections below. The full 181-document evaluation has not been re-run on the current code: it costs about $4–5 (`task eval-3p`), and the API credit ran out. Until it is re-run, the headline table describes the earlier version.
+**Which code these numbers measure.** All extraction figures come from one run of the 181 documents on 23 November 2026, on the current code, with `task eval-3p`.
 
 #### Dataset
 
@@ -465,38 +485,43 @@ There are 181 labelled third-party invoice documents (`backend/evaluation/third_
 
 | Metric | Actual result |
 |---|---|
-| Number of evaluated documents | 181 (179 extracted) |
-| Field-level extraction accuracy | **87.5%** (1,363 / 1,557 fields) |
-| Exact invoice accuracy | **65.9%** |
+| Number of evaluated documents | 181 (180 extracted) |
+| Field-level extraction accuracy | **94.6%** (1,651 / 1,745 fields) |
+| Exact invoice accuracy | **80.6%** |
 | Hallucination rate | **0.0%** |
-| Line-item precision / recall / F1 | 98.7% / 96.8% / 97.7% |
-| Average processing time | **10.31 s** (p95 32.29 s) |
-| Median processing time | **7.01 s** |
-| Document success rate | **98.9%** (179 / 181) |
-| Document failure rate | **1.1%** (2 / 181) |
+| Line-item precision / recall / F1 | 99.6% / 98.5% / 99.0% |
+| Average processing time | **8.70 s** (p95 20.72 s) |
+| Median processing time | **5.80 s** |
+| Document success rate | **99.4%** (180 / 181) |
+| Document failure rate | **0.6%** (1 / 181) |
 | Validation precision | **98.1%** |
 | Validation recall | **99.7%** (100% of 860 injected errors detected; 9.5% false-alarm rate) |
 | Cross-document reconciliation accuracy | PDF↔Excel rows: **94.0%** (100% on digital PDFs, 88.3% on scans); PDF↔PDF invoice comparison: **100%** of 54 pairs with exact invoices. See *Cross-document comparison* below. |
-| API cost for the run | $4.62 |
+| API cost for the run | $3.98 |
 
-**Results by category:**
+The validation and reconciliation rows come from their own runs (`task eval-3p-validate`, `task reconcile`), which use the ground truth and don't depend on the extraction run.
 
-| Category | Exact invoice | Field accuracy | Median time |
-|---|---|---|---|
-| Clean | 77.4% | 100% | 5.02 s |
-| Freight | 100% | 100% | 5.70 s |
-| Hard layouts | 100% | 100% | 5.38 s |
-| Multi-page | 100% | 100% | 32.32 s |
-| Scanned | 86.7% | 99.3% | 8.91 s |
-| Tax layouts | 64.3% | 97.6% | 6.18 s |
-| Multi-currency | 68.4% | 90.5% | 5.04 s |
-| Photographed | 47.7% | 79.8% | 8.71 s |
-| Handwritten | 0% | 51.4% | 11.04 s |
-| Credit notes | 0% | 25.0% | 4.57 s |
+**Results by category**:
 
-**Failures:**
-- `freight-trip-reference-2`: the network connection dropped during the API call (`ReadError`). In production this would be retried automatically.
-- `photo-rotate-small-severe`: OCR found no text in a photo tilted about 10°. Fixed since by deskewing; see the OCR benchmark below.
+| Category | Docs | Exact invoice | Field accuracy | Median time |
+|---|---|---|---|---|
+| Clean | 31 | 100% | 100% | 5.04 s |
+| Credit notes | 10 | 100% | 100% | 4.22 s |
+| Freight | 16 | 100% | 100% | 5.38 s |
+| Hard layouts | 13 | 100% | 100% | 5.71 s |
+| Multi-page | 10 | 100% | 100% | 35.03 s |
+| Scanned | 15 (14 extracted) | 85.7% | 99.3% | 7.98 s |
+| Tax layouts | 14 | 71.4% | 97.8% | 5.37 s |
+| Multi-currency | 19 | 68.4% | 91.5% | 4.89 s |
+| Photographed | 45 | 66.7% | 91.1% | 8.56 s |
+| Handwritten | 8 | 0% | 56.4% | 10.88 s |
+
+**Where the remaining errors are:**
+- **Handwritten:** most mistakes are line amounts and descriptions that OCR misreads.
+- **Photos:** mostly the invoice number and dates, on blurred, low-resolution, stained and annotated photos.
+- **Multi-currency:** on invoices showing two currencies, the model sometimes picks the other one (for example EUR instead of NAD), and then reports that currency's amounts.
+
+**Failure:** `scan-fax-moderate`: the network connection dropped during the API call (`ReadError`). In production this would be retried automatically.
 
 #### Cross-document comparison (PDF↔PDF and PDF↔Excel)
 
@@ -547,44 +572,27 @@ The dataset has 102 labelled pairs, generated from synthetic invoices with a fix
 
 - **Line pairing:** all 208 expected line pairs were found, with no wrong pairs, including after removals, additions and reordering.
 - **Text diff:** it catches every real change, but also flags every scanned copy (OCR noise) and every reordered invoice (the text changed but the invoice didn't). Use it as a "something changed" signal, not as a verdict.
-- **Invoice comparison here is given the exact invoices,** so it measures the comparison and line matching alone. End to end it inherits extraction accuracy (87.5% of fields). That run is built (`task reconcile -- --extraction claude --yes`) but has not run, because the API credit ran out.
-- **Bug found and fixed:** a line item with no product code on either side was marked "different" even against an identical copy. In the first run this produced false alarms on 3 of 6 identical pairs and 5 of 6 reordered pairs. Fields that neither side states no longer count as differences. A regression test was added.
-
-#### OCR clean-up benchmark
-
-This was measured after adding image clean-up. It checks OCR output only, with no Claude calls, on the 68 documents in this dataset that go through OCR. A value counts as found when it appears in the OCR text: the invoice number, subtotal, tax, total and every line amount (535 values). Amounts are matched by number, so `1.234,56` and `1,234.56` both match.
-
-| Category | Docs | Values found before | After | Median OCR time before → after |
-|---|---|---|---|---|
-| Photographed | 45 | 68.9% | **85.3%** | 0.93 s → 1.29 s |
-| Scanned | 15 | 99.2% | 99.2% | 1.01 s → 1.19 s |
-| Handwritten | 8 | 16.4% | 16.4% | 1.36 s → 1.38 s |
-| **All** | 68 | 70.3% | **81.3%** | 1.00 s → 1.29 s |
-
-- **Documents with no text:** 1 before (`photo-rotate-small-severe`), 0 after.
-- **Better:** 11 documents. Tilted, sideways and upside-down, shadowed, dark, screen-photographed and perspective photos went from 0–5 of 8 values found to 6–8.
-- **Worse:** 2 documents, each missing one character of the invoice number.
-- **Not yet measured:** the Claude extraction evaluation above was run before this change and has not been re-run.
+- **Invoice comparison here is given the exact invoices,** so it measures the comparison and line matching alone. End to end it inherits extraction accuracy (94.6% of fields). That run is built (`task reconcile -- --extraction claude --yes`) but has not been run yet.
+- **Identical documents:** a line item with no product code on either side counts as matching an identical copy; fields that neither side states are not counted as differences. A regression test covers this.
 
 #### OCR on poor-quality images (skew, blur, low resolution, dark, noisy)
 
-Measured on 23 November 2026 on the current code, with `task eval-3p-ocr` (free; Tesseract only, no Claude calls). The scoring is the same as in the OCR clean-up benchmark above: a value counts as read when it appears in the OCR text (the invoice number, subtotal, tax, total and every line amount). Each defect group has two kinds of real photo or scan from the third-party dataset, each at mild, moderate and severe strength. Results are in `backend/evaluation/third_party_eval/results/ocr_preprocessing.json`; the HTML report has the same tables.
+Measured on 23 November 2026 on the current code, with `task eval-3p-ocr` (free; Tesseract only, no Claude calls). It checks OCR output only, on the 68 documents in this dataset that go through OCR. A value counts as read when it appears in the OCR text: the invoice number, subtotal, tax, total and every line amount (535 values). Amounts are matched by number, so `1.234,56` and `1,234.56` both match. Each defect group has two kinds of real photo or scan from the third-party dataset, each at mild, moderate and severe strength. Results are in `backend/evaluation/third_party_eval/results/ocr_preprocessing.json`; the HTML report has the same tables.
 
 **Real documents, by defect** (values read, with clean-up):
 
-| Defect | Documents | Mild | Moderate | Severe | No clean-up | Previous version | **Current** |
-|---|---|---|---|---|---|---|---|
-| Skew | small rotation, wrong orientation (6) | 100% | 100% | 94% | 66.7% | 97.9% | **97.9%** |
-| Blur | defocus, motion (6) | 81% | 25% | 0% | 35.4% | 35.4% | **35.4%** |
-| Low resolution | low resolution, heavy JPEG (6) | 100% | 88% | 81% | 89.6% | 89.6% | **89.6%** |
-| Dark | low light, shadow (6) | 100% | 100% | 100% | 66.7% | 97.9% | **100%** |
-| Noisy | noisy scan, fax (6) | 100% | 100% | 94% | 97.9% | 97.9% | **97.9%** |
-| All photos | 45 docs, 360 values | | | | 73.1% | 85.0% | **86.1%** |
-| All OCR documents | 68 docs, 535 values | | | | 73.1% | 81.1% | **81.9%** |
+| Defect | Documents | Mild | Moderate | Severe | No clean-up | **Overall** |
+|---|---|---|---|---|---|---|
+| Skew | small rotation, wrong orientation (6) | 100% | 100% | 94% | 66.7% | **97.9%** |
+| Blur | defocus, motion (6) | 81% | 25% | 0% | 35.4% | **35.4%** |
+| Low resolution | low resolution, heavy JPEG (6) | 100% | 88% | 81% | 89.6% | **89.6%** |
+| Dark | low light, shadow (6) | 100% | 100% | 100% | 66.7% | **100%** |
+| Noisy | noisy scan, fax (6) | 100% | 100% | 94% | 97.9% | **97.9%** |
+| All photos | 45 docs, 360 values | | | | 73.1% | **86.1%** |
+| All OCR documents | 68 docs, 535 values | | | | 73.1% | **81.9%** |
 
-- **Columns:** *No clean-up* is Tesseract on the raw image. *Previous version* is the clean-up before the fix for dark, grainy pages (it reproduces the 81.3% above to within one value).
-- **Changes against the previous version:** three documents gained values (severe low light 7→8 of 8, severe combined defects 0→3, severe perspective 6→7) and one lost a value (severe screen photo 7→6).
-- **Now read:** `photo-rotate-small-severe`, which failed in the extraction run, now gives 15 of 16 values for severe skew.
+- **Columns:** *Mild*, *Moderate* and *Severe* are with clean-up, at each strength of the defect. *No clean-up* is Tesseract on the raw image. *Overall* is with clean-up, across all strengths.
+- **Every document is read:** no document comes out with empty OCR text. The most tilted photo (`photo-rotate-small-severe`) gives 15 of 16 values.
 
 **Synthetic severity sweeps.** Generated invoice pages with one defect at a time, so the point where reading breaks down is visible. Sparse pages (a few lines, like a receipt) and dense pages (with line items) are pooled, with 6 key values per page.
 
@@ -611,20 +619,16 @@ Measured on 23 November 2026 on the current code, with `task eval-3p-ocr` (free;
 - **Review:** documents that are read poorly get low OCR confidence and are flagged for manual review (`REVIEW_MIN_OCR_CONFIDENCE`, 80).
 
 #### Known limitations
-- **Credit notes (fixed since this run):**
-  - In the run above, 7 of 10 were classified as "not an invoice", because the schema defined an invoice as "requesting payment". The other 3 had negative amounts where the ground truth is positive.
-  - After adding `document_type` and the sign convention, a Claude run on the 10 credit notes, the "Credit Applied" invoice and the 2 account statements got **13 of 13 documents fully correct**: every field and line item. Before, the credit notes were 0 of 10 fully correct, with 25.0% of fields right. That run cost $0.13.
-  - The full 181-document evaluation has not been re-run since.
 - **Images:**
   - Handwritten and damaged photos cause OCR misreads.
   - Perspective distortion (a page photographed at an angle on a table) is not corrected.
   - Blurred photos remain hard to read: 35.4% of values on real defocus and motion blur, 0% when severe (see *OCR on poor-quality images*).
 - **Multi-currency invoices:** the model sometimes picks the foreign currency.
 - **Validation false alarms:** the arithmetic checks raise false alarms (9.5%), mostly on the `total` check for invoices with credits, freight or surcharges.
-- **Review flags on real extractions:** flags raised on the model's actual output are noisier than in the injected-error test. They caught 5 of 7 documents that should have been flagged, with 39 false alarms out of 177 (11.4% precision).
+- **Review flags on real extractions:** flags raised on the model's actual output are noisier than in the injected-error test. They caught 5 of 7 documents that should have been flagged, with 33 false alarms out of 178 (13.2% precision).
 - **Not measured:**
   - customer name (the third-party labels don't include it)
-  - PDF↔PDF invoice comparison end to end with Claude extraction (built as `--extraction claude`; the API credit ran out before it could run)
+  - PDF↔PDF invoice comparison end to end with Claude extraction (built as `--extraction claude`; not run yet)
   - the synthetic dataset, which has only been run with the oracle harness check, not with Claude
 - **Long documents:**
   - **Size limit:** documents are split into parts, so there is no longer a single-call limit. The cap is now 120 parts of 50,000 characters (`LLM_MAX_PARTS`, about 6 million characters).
@@ -645,7 +649,7 @@ The recording covers:
 - Keyword, semantic and hybrid search.
 - Database schema and evaluation results.
 
-**Walkthrough recording:** _TODO: add the video link before submitting._
+**Walkthrough recording:**[ video link](https://drive.google.com/drive/folders/1i5ifpX8Ef6cbCN7bXJpJRG0tmyXRngGM?usp=sharing)
 
 ### Deliverable 9 — AI Prompts and Development Disclosure
 
@@ -661,7 +665,7 @@ AI assistance was used throughout development.
 - **Me:** I set the architecture and requirements, chose the technologies, reviewed the generated code, and decided what to accept.
 - **AI:** wrote and edited code, tests and documentation on request. It also ran the test suites and the evaluation, and reported the measured numbers.
 
-**Measured results:** all test results and evaluation metrics in this document come from actual runs (22 November 2026). None are estimated.
+**Measured results:** all test results and evaluation metrics in this document come from actual runs; none are estimated. The extraction, validation and OCR evaluations and the test results are from the latest runs, on 23 November 2026.
 
 **AI inside the product:** the application itself uses Claude Opus 5.5 through the Anthropic API for invoice extraction. Embeddings come from the open-source FastEmbed model (BAAI/bge-small-en-v1.5), which runs locally.
 
@@ -722,4 +726,4 @@ This would be the first addition before production use. Rate limits are kept in 
 - Job state in PostgreSQL makes processing recoverable after crashes.
 - Search uses GIN and HNSW indexes.
 - The production frontend bundle is 115.84 KB gzipped.
-- Measured median processing time is 7.0 s per document, almost all of it the LLM call. Text extraction and OCR take a median of 0.02 s.
+- Measured median processing time is 5.8 s per document, almost all of it the LLM call. Text extraction and OCR take a median of 0.02 s.

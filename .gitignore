@@ -228,3 +228,6 @@ __marimo__/
 
 # Uploaded documents
 backend/storage/
+
+# Test run reports (task test-report)
+test-results/

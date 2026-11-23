@@ -33,3 +33,6 @@ Taskfile.yml
 evaluation/
 db/
 render.yaml
+
+# Test reports (task test-report)
+test-results/

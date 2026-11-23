@@ -88,6 +88,78 @@ docIS/
 └── README.md
 ```
 
+## Quick Start with Docker (Ubuntu)
+
+Run the whole app from the published images on [Docker Hub](https://hub.docker.com/r/diptu/docis/tags). You don't need the source code, Python, Node, Tesseract or a database: only Docker, one file and your Anthropic API key. PostgreSQL with pgvector, Redis, the database tables and the pgvector extension are all set up automatically on the first start. The images are built for `linux/amd64` and `linux/arm64`.
+
+| Image | What it runs |
+|---|---|
+| `diptu/docis:backend-latest` | API, background worker and scheduler (with Tesseract OCR and the search model built in) |
+| `diptu/docis:frontend-latest` | The web app (nginx), which forwards `/api` to the API |
+| `diptu/docis:db-latest` | PostgreSQL 18 with pgvector |
+
+Each image also has a fixed version tag, such as `backend-0.1.0`.
+
+**1. Install Docker** (Ubuntu 22.04 or 24.04; skip if `docker compose version` already works):
+
+```bash
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker $USER    # run docker without sudo
+newgrp docker                    # or log out and back in
+docker compose version           # should print v2.x or later
+```
+
+**2. Download the compose file:**
+
+```bash
+mkdir -p ~/docis && cd ~/docis
+curl -fsSLO https://raw.githubusercontent.com/diptu/docIS/main/deploy/docker-compose.yml
+```
+
+Or copy [`deploy/docker-compose.yml`](deploy/docker-compose.yml) from this repository into an empty folder.
+
+**3. Add your Anthropic API key**, from [console.anthropic.com](https://console.anthropic.com). This is the only setting you need:
+
+```bash
+echo "ANTHROPIC_API_KEY=sk-ant-..." > .env    # replace with your key
+```
+
+Without a key, documents are still stored, OCR'd and searchable, but invoice extraction fails with a clear message.
+
+Everything else has a working default. To change ports, upload limits, the worker count, the model or the database password, start from the full template instead: `curl -fsSL https://raw.githubusercontent.com/diptu/docIS/main/deploy/.env.example -o .env`, then edit it ([`deploy/.env.example`](deploy/.env.example) explains each setting).
+
+**4. Start it:**
+
+```bash
+docker compose up -d       # pulls the images on first run (about 1.5 GB)
+docker compose ps          # all services "running"/"healthy"; migrate "exited (0)"
+```
+
+Open **http://localhost:8080** (or `http://<server-ip>:8080` from another machine). The API answers on `http://localhost:8000` from the server itself, with interactive docs at `/docs`.
+
+**Everyday commands** (run them in `~/docis`):
+
+| Task | Command |
+|---|---|
+| Follow the logs | `docker compose logs -f api worker` |
+| Apply changed `.env` settings | `docker compose up -d` |
+| Update to the newest images | `docker compose pull && docker compose up -d` |
+| Pin a version | set `DOCIS_VERSION=0.1.0` in `.env`, then `docker compose up -d` |
+| Process more documents in parallel | `docker compose up -d --scale worker=3` |
+| Stop (keeps all data) | `docker compose down` |
+| Delete everything, including all documents | `docker compose down -v` |
+| Back up the database | `docker compose exec db pg_dump -U docis docis > docis-backup.sql` |
+
+Documents, the database and the job queue live in Docker volumes (`documents-data`, `db-data`, `redis-data`), so they survive restarts and updates.
+
+**If something goes wrong:**
+- **Port 8080 already in use:** set another `WEB_PORT` in `.env`, then `docker compose up -d`.
+- **Invoice extraction failed: "out of credits" or "authentication":** check `ANTHROPIC_API_KEY` and your API balance, then click **Retry** on the document.
+- **Can't reach it from another machine:** open the port in the firewall (`sudo ufw allow 8080/tcp`).
+- **Security:** the app has no login. Anyone who can reach port 8080 can see, change and delete documents, so expose it only on a trusted network or behind a VPN or an authenticating proxy.
+
+To build the images yourself from source instead, see [2a](#2a-run-everything-with-docker-quickest).
+
 ## Prerequisites
 
 - Python 3.11.9+ and [uv](https://docs.astral.sh/uv/)
@@ -254,9 +326,18 @@ cd backend
 docker compose up --build
 ```
 
-This starts PostgreSQL + pgvector, runs the migrations, and starts the API on http://localhost:8000, the Celery worker, Celery beat and Redis.
+This builds the images from source and starts PostgreSQL + pgvector, runs the migrations, and starts the API on http://localhost:8000, the Celery worker, Celery beat, Redis and the web app on http://localhost:8080.
 
-Then start the frontend as in step 3.
+To publish the images to Docker Hub (maintainers; needs `docker login`), build them for both platforms and push:
+
+```bash
+V=0.1.0; P=linux/amd64,linux/arm64
+docker buildx build --platform $P -t diptu/docis:db-$V       -t diptu/docis:db-latest       --push backend/db
+docker buildx build --platform $P -t diptu/docis:frontend-$V -t diptu/docis:frontend-latest --push frontend
+docker buildx build --platform $P -t diptu/docis:backend-$V  -t diptu/docis:backend-latest  --push backend
+```
+
+Run these from the repository root.
 
 ### 2b. Run the backend locally (development)
 
@@ -317,21 +398,26 @@ Main endpoints:
 
 ```bash
 # Backend (from backend/)
-uv run pytest                      # 788 tests; PostgreSQL and real-embedding tests are skipped
+uv run pytest                      # 829 tests; PostgreSQL and real-embedding tests are skipped
 TEST_POSTGRES_URL=postgresql+asyncpg://docis:docis@localhost:5434/docis_test \
-RUN_EMBEDDING_TESTS=1 uv run pytest  # full suite: 810 tests
+RUN_EMBEDDING_TESTS=1 uv run pytest  # full suite: 851 tests
+task test-report                   # full suite, backend + frontend, with saved reports (see below)
 
 # Frontend (from frontend/)
 npm run test
 npm run build
 ```
 
+`task test-report` needs PostgreSQL running (`docker compose up -d db`). It
+saves JUnit XML, coverage (XML and HTML) and a Markdown summary in
+`backend/test-results/` and `frontend/test-results/`.
+
 Latest results:
 
 | Suite | Result |
 |---|---|
-| Backend | 810 passed, 0 failed, 99.77% coverage |
-| Frontend | 92 passed in 15 files |
+| Backend | 851 passed, 0 failed, 99.74% coverage |
+| Frontend | 96 passed in 16 files |
 
 ## Evaluation
 
@@ -346,10 +432,11 @@ task reconcile          # measure cross-document comparison on them (free)
 
 Results of the latest run are in [`deliverables.md`](deliverables.md#deliverable-7--evaluation-report). The run used 181 labelled third-party documents with Claude Opus 5.5:
 
-- Field accuracy: 87.5%
-- Exact-invoice accuracy: 65.9%
-- Document success rate: 98.9%
-- Median processing time: 7.0 s
+- Field accuracy: 94.6%
+- Exact-invoice accuracy: 80.6%
+- Invented values: 0.0%
+- Document success rate: 99.4%
+- Median processing time: 5.8 s
 
 ## Application Pages
 

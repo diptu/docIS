@@ -1,0 +1,157 @@
+# docIS from the published Docker Hub images (https://hub.docker.com/r/diptu/docis).
+# No source code or build needed:
+#
+#   echo "ANTHROPIC_API_KEY=sk-ant-..." > .env   # the only required setting
+#   docker compose up -d
+#   open http://localhost:8080
+#
+# PostgreSQL with pgvector, Redis, the database tables and the pgvector
+# extension are all set up automatically on the first start.
+#
+# Every setting in .env reaches the backend services (env_file; see
+# .env.example for the optional ones). The few values that must point at
+# the other containers are set below and win.
+name: docis
+
+x-backend: &backend
+  image: diptu/docis:backend-${DOCIS_VERSION:-latest}
+  env_file:
+    - path: .env
+      required: false
+  environment: &backend-env
+    DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-docis}:${POSTGRES_PASSWORD:-docis}@db:5432/${POSTGRES_DB:-docis}
+    CELERY_BROKER_URL: redis://redis:6379/0
+    STORAGE_DIR: /app/storage
+    EMBEDDING_CACHE_DIR: /app/models
+  restart: unless-stopped
+
+services:
+  # PostgreSQL 18 with pgvector (semantic search). Only reachable inside
+  # this stack's private network (no port on the host), so the default
+  # password is not exposed; set POSTGRES_PASSWORD in .env to change it
+  # (before the first start).
+  db:
+    image: diptu/docis:db-${DOCIS_VERSION:-latest}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-docis}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-docis}
+      POSTGRES_DB: ${POSTGRES_DB:-docis}
+    volumes:
+      - db-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Message broker for the background jobs. Not published on the host.
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Creates or upgrades the database tables, then exits.
+  migrate:
+    <<: *backend
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # REST API. Reached through the web app at /api; also on
+  # 127.0.0.1:${API_PORT} (Swagger UI at /docs) from this machine only.
+  api:
+    <<: *backend
+    environment:
+      <<: *backend-env
+      # Requests arrive through the web container's nginx proxy.
+      RATE_LIMIT_TRUSTED_PROXY_HOPS: ${RATE_LIMIT_TRUSTED_PROXY_HOPS:-1}
+    volumes:
+      - documents-data:/app/storage
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # Background worker: OCR, spreadsheet parsing and AI extraction.
+  # More workers: docker compose up -d --scale worker=3
+  worker:
+    <<: *backend
+    command:
+      - sh
+      - -c
+      - exec celery -A app.worker.celery_app worker --loglevel=INFO --queues=documents --concurrency=$${WORKER_CONCURRENCY:-2}
+    environment:
+      <<: *backend-env
+      # One Tesseract thread per OCR process; parallelism comes from
+      # WORKER_CONCURRENCY.
+      OMP_THREAD_LIMIT: "1"
+    volumes:
+      - documents-data:/app/storage
+    # Lets running jobs finish on shutdown.
+    stop_grace_period: 2m
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - celery -A app.worker.celery_app inspect ping --destination celery@$$HOSTNAME --timeout 5
+      interval: 30s
+      timeout: 15s
+      start_period: 20s
+      retries: 3
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # Scheduler: re-queues jobs whose worker died. Run exactly one.
+  beat:
+    <<: *backend
+    command:
+      - celery
+      - -A
+      - app.worker.celery_app
+      - beat
+      - --loglevel=INFO
+      - --schedule=/tmp/celerybeat-schedule
+    healthcheck:
+      disable: true
+    depends_on:
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # The web app (React, served by nginx), which forwards /api to the API.
+  web:
+    image: diptu/docis:frontend-${DOCIS_VERSION:-latest}
+    restart: unless-stopped
+    environment:
+      API_UPSTREAM: http://api:8000
+      MAX_UPLOAD_SIZE: ${WEB_MAX_UPLOAD_SIZE:-1100m}
+    ports:
+      - "${WEB_PORT:-8080}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  db-data:
+  documents-data:
+  redis-data:

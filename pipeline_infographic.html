@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>docIS Document Pipeline</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one top-to-bottom flow. Shared stages are full-width bands; content
+   extraction splits into three file-type lanes that rejoin for AI + checks. */
+:root {
+  --bg: #f5f7f8;
+  --surface: #ffffff;
+  --ink: #142028;
+  --muted: #586874;
+  --line: #d5dde2;
+  --accent: #1d5f8a;
+  --pdf: #b5412f;
+  --pdf-soft: #fbece8;
+  --img: #a06a10;
+  --img-soft: #fbf1df;
+  --sheet: #2c7a4b;
+  --sheet-soft: #e5f3ea;
+  --warn: #9a6400;
+  --err: #b3261e;
+  --chip: #eef2f5;
+  --display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f161b; --surface: #172129; --ink: #e4ebef; --muted: #9aabb6; --line: #2a3844;
+    --accent: #6cb3e3; --pdf: #ef8a76; --pdf-soft: #2c1a17; --img: #e2b25a; --img-soft: #2a2213;
+    --sheet: #74c995; --sheet-soft: #142a1d; --warn: #e3b04f; --err: #f08b84; --chip: #1f2c36;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f161b; --surface: #172129; --ink: #e4ebef; --muted: #9aabb6; --line: #2a3844;
+  --accent: #6cb3e3; --pdf: #ef8a76; --pdf-soft: #2c1a17; --img: #e2b25a; --img-soft: #2a2213;
+  --sheet: #74c995; --sheet-soft: #142a1d; --warn: #e3b04f; --err: #f08b84; --chip: #1f2c36;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--body);
+  font-size: 15px; line-height: 1.5;
+}
+.wrap {
+  max-width: 1120px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 56px;
+}
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(1.9rem, 4.5vw, 2.8rem); line-height: 1.08; letter-spacing: -0.01em; }
+.lede { color: var(--muted); max-width: 62ch; margin: 12px 0 0; font-size: 1.02rem; }
+code, .mono { font-family: var(--mono); font-size: 0.86em; }
+
+/* file type key */
+.types { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
+.type {
+  display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px 6px 8px;
+  border-radius: 999px; background: var(--surface); border: 1px solid var(--line); font-size: 0.88rem;
+}
+.dot { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.t-pdf .dot { background: var(--pdf); } .t-img .dot { background: var(--img); } .t-sheet .dot { background: var(--sheet); }
+.type b { font-weight: 600; }
+.type span { color: var(--muted); font-family: var(--mono); font-size: 0.78rem; }
+
+/* flow */
+.flow { margin-top: 36px; display: grid; gap: 0; }
+.stage { position: relative; display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 16px; }
+.rail { position: relative; display: flex; justify-content: center; }
+.rail::before {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 50%; width: 2px;
+  transform: translateX(-50%); background: var(--line);
+}
+.stage:first-child .rail::before { top: 22px; }
+.stage:last-child .rail::before { bottom: auto; height: 22px; }
+.num {
+  position: relative; z-index: 1; width: 44px; height: 44px; border-radius: 50%;
+  background: var(--ink); color: var(--bg); display: grid; place-items: center;
+  font-family: var(--display); font-weight: 700; font-size: 1.1rem;
+}
+.stage.fail .num { background: var(--err); }
+.body { padding-bottom: 30px; min-width: 0; }
+.head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; min-height: 44px; padding-top: 8px; }
+.head h2 { font-size: 1.35rem; }
+.where { font-family: var(--mono); font-size: 0.78rem; color: var(--muted); }
+.card {
+  margin-top: 10px; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 10px; padding: 16px 18px;
+}
+.steps { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.steps li { display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 8px; }
+.steps li::before { content: ""; width: 6px; height: 6px; margin-top: 9px; border-radius: 50%; background: var(--accent); }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 28px; }
+.label {
+  font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
+  font-weight: 600; margin: 0 0 8px;
+}
+
+/* status pills */
+.status {
+  display: inline-block; font-family: var(--mono); font-size: 0.76rem; padding: 1px 8px;
+  border-radius: 999px; background: var(--chip); color: var(--ink); white-space: nowrap;
+}
+.reject { color: var(--err); font-family: var(--mono); font-size: 0.8rem; }
+
+/* lanes */
+.lanes { margin-top: 10px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.lane { border-radius: 10px; border: 1px solid var(--line); background: var(--surface); overflow: hidden; display: flex; flex-direction: column; }
+.lane-top { padding: 12px 16px; display: flex; align-items: center; gap: 10px; }
+.lane-top h3 { font-size: 1.05rem; }
+.lane-top .mono { color: var(--muted); margin-left: auto; font-size: 0.74rem; }
+.l-pdf .lane-top { background: var(--pdf-soft); } .l-pdf { border-top: 3px solid var(--pdf); }
+.l-img .lane-top { background: var(--img-soft); } .l-img { border-top: 3px solid var(--img); }
+.l-sheet .lane-top { background: var(--sheet-soft); } .l-sheet { border-top: 3px solid var(--sheet); }
+.chain { list-style: none; margin: 0; padding: 14px 16px 16px; display: grid; gap: 0; flex: 1; }
+.chain li { position: relative; padding: 0 0 12px 22px; }
+.chain li::before {
+  content: ""; position: absolute; left: 4px; top: 7px; width: 8px; height: 8px;
+  border-radius: 50%; border: 2px solid currentColor; background: var(--surface);
+}
+.chain li::after {
+  content: ""; position: absolute; left: 8px; top: 18px; bottom: 0; width: 2px; background: var(--line);
+}
+.chain li:last-child { padding-bottom: 0; }
+.chain li:last-child::after { display: none; }
+.l-pdf .chain li::before { color: var(--pdf); } .l-img .chain li::before { color: var(--img); } .l-sheet .chain li::before { color: var(--sheet); }
+.chain b { font-weight: 600; }
+.chain small { display: block; color: var(--muted); font-size: 0.84rem; }
+.branch {
+  margin: 4px 0 2px; padding: 8px 10px; border-radius: 8px; background: var(--chip); font-size: 0.86rem;
+}
+.branch .mono { font-size: 0.78rem; }
+.lane-foot { border-top: 1px dashed var(--line); padding: 10px 16px; font-size: 0.84rem; color: var(--muted); }
+.lane-foot b { color: var(--ink); font-weight: 600; }
+
+/* checks table */
+.checks { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+.checks th, .checks td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.checks th { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
+.checks td:first-child { font-family: var(--mono); font-size: 0.8rem; white-space: nowrap; }
+.sev { font-family: var(--mono); font-size: 0.76rem; font-weight: 500; }
+.sev.e { color: var(--err); } .sev.w { color: var(--warn); }
+.applies { display: inline-flex; gap: 4px; }
+.applies i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+.applies .p { background: var(--pdf); } .applies .m { background: var(--img); } .applies .s { background: var(--sheet); }
+.scroll { overflow-x: auto; }
+
+.json {
+  margin: 0; font-family: var(--mono); font-size: 0.8rem; line-height: 1.55; background: var(--chip);
+  border-radius: 8px; padding: 12px 14px; overflow-x: auto; color: var(--ink);
+}
+.json .k { color: var(--accent); } .json .n { color: var(--muted); }
+
+.footer { margin-top: 8px; color: var(--muted); font-size: 0.84rem; max-width: 70ch; }
+
+@media (max-width: 860px) {
+  .lanes { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 520px) {
+  .stage { grid-template-columns: 36px minmax(0, 1fr); gap: 10px; }
+  .num { width: 34px; height: 34px; font-size: 0.95rem; }
+  .head { min-height: 34px; padding-top: 4px; }
+  .card { padding: 14px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>How a document travels through docIS</h1>
+    <p class="lede">From upload to a validated invoice. PDFs, images and spreadsheets share the same intake, AI extraction and checks. They differ in one stage: how the text is pulled out of the file.</p>
+    <div class="types" aria-label="File types">
+      <span class="type t-pdf"><i class="dot"></i><b>PDF</b><span>.pdf</span></span>
+      <span class="type t-img"><i class="dot"></i><b>Images</b><span>.jpg .png .tiff</span></span>
+      <span class="type t-sheet"><i class="dot"></i><b>Spreadsheets</b><span>.xlsx .xls .csv</span></span>
+    </div>
+  </header>
+
+  <div class="flow">
+
+    <!-- 1 upload -->
+    <section class="stage">
+      <div class="rail"><span class="num">1</span></div>
+      <div class="body">
+        <div class="head"><h2>Upload and gatekeeping</h2><span class="where">POST /documents</span></div>
+        <div class="card">
+          <div class="cols">
+            <div>
+              <p class="label">Every file</p>
+              <ul class="steps">
+                <li><span>Whole request capped before it is parsed. At most 20 files, 50 MB each <span class="reject">→ 413</span></span></li>
+                <li><span>Extension must be accepted, and the first bytes must match it <span class="mono">%PDF-</span>, <span class="mono">FF D8 FF</span>, <span class="mono">PK…</span> <span class="reject">→ 415</span></span></li>
+                <li><span>Streamed to storage while a SHA-256 hash is computed (used later to spot duplicates)</span></li>
+                <li><span>One bad file rejects the whole batch. Otherwise <span class="status">uploaded</span> and the API answers 201</span></li>
+              </ul>
+            </div>
+            <div>
+              <p class="label">Content check per type <span class="reject">→ 422</span></p>
+              <ul class="steps">
+                <li><span><b style="color:var(--pdf)">PDF</b>: opens, not password-protected, has pages</span></li>
+                <li><span><b style="color:var(--img)">Image</b>: decodes, and the format matches the extension</span></li>
+                <li><span><b style="color:var(--sheet)">Sheet</b>: valid workbook, not encrypted, no zip bomb. A CSV must decode and hold data</span></li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2 queue -->
+    <section class="stage">
+      <div class="rail"><span class="num">2</span></div>
+      <div class="body">
+        <div class="head"><h2>Queued for a background worker</h2><span class="where">Celery + Redis</span></div>
+        <div class="card">
+          <ul class="steps">
+            <li><span>A processing job is written in the same transaction as the document, and sent to the queue only after commit</span></li>
+            <li><span>A worker claims it with a 5-minute lease (a duplicate delivery is skipped). Status <span class="status">processing</span>, with progress you can poll at <span class="mono">/documents/{id}/processing</span></span></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3 content extraction: lanes -->
+    <section class="stage">
+      <div class="rail"><span class="num">3</span></div>
+      <div class="body">
+        <div class="head"><h2>Content extraction: one lane per file type</h2><span class="where">app/processing/</span></div>
+        <div class="lanes">
+          <article class="lane l-pdf">
+            <div class="lane-top"><i class="dot" style="background:var(--pdf)"></i><h3>PDF</h3><span class="mono">pypdf · PDFium</span></div>
+            <ol class="chain">
+              <li><b>Read the text layer</b><small>Every page, normalised</small></li>
+              <li><b>Is the page a scan?</b>
+                <div class="branch">Under 20 visible characters and contains an image → <b>OCR this page</b>. Otherwise keep its text</div>
+              </li>
+              <li><b>Render scanned pages</b><small>300 DPI, capped at 50 megapixels</small></li>
+              <li><b>Clean up, then Tesseract</b><small>Same image clean-up as the image lane</small></li>
+              <li><b>Merge</b><small>Text and OCR pages, back in page order</small></li>
+            </ol>
+            <div class="lane-foot">Digital PDFs never run OCR, so they're fast. A mixed PDF only OCRs its scanned pages.</div>
+          </article>
+
+          <article class="lane l-img">
+            <div class="lane-top"><i class="dot" style="background:var(--img)"></i><h3>Images</h3><span class="mono">Pillow · Tesseract</span></div>
+            <ol class="chain">
+              <li><b>Each frame is a page</b><small>A multi-page TIFF gives several pages</small></li>
+              <li><b>Normalise</b><small>Apply EXIF rotation, transparency onto white, grayscale</small></li>
+              <li><b>Enlarge small images</b><small>Up to a 1,500 px long side, before clean-up</small></li>
+              <li><b>Clean up only what's measured as needed</b>
+                <div class="branch">Dark or shadowed → remove grain, flatten lighting, stretch contrast, whiten paper. Then straighten up to ±15°</div>
+              </li>
+              <li><b>Tesseract</b><small>Text plus word confidence. Below 60, also tries the page rotated 90°/180°/270°</small></li>
+            </ol>
+            <div class="lane-foot">Hardest lane: photos <b>79.8%</b> of fields, handwriting <b>51.4%</b>. Blur is the weak spot.</div>
+          </article>
+
+          <article class="lane l-sheet">
+            <div class="lane-top"><i class="dot" style="background:var(--sheet)"></i><h3>Spreadsheets</h3><span class="mono">openpyxl · xlrd</span></div>
+            <ol class="chain">
+              <li><b>Pick the reader</b><small>XLSX: openpyxl · XLS: xlrd · CSV: built-in</small></li>
+              <li><b>CSV detection</b>
+                <div class="branch">Delimiter sniffed from <span class="mono">, ; tab |</span>. Encoding UTF-8, falling back to Windows-1252</div>
+              </li>
+              <li><b>Every sheet becomes a grid</b><small>Typed cells (numbers, dates, text). Empty trailing rows and columns are trimmed</small></li>
+              <li><b>Size guard</b><small>Up to 1 million cells per sheet, then cut at a row and marked truncated</small></li>
+            </ol>
+            <div class="lane-foot">No OCR and no image clean-up. Cell values arrive exactly as stored.</div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4 save + index -->
+    <section class="stage">
+      <div class="rail"><span class="num">4</span></div>
+      <div class="body">
+        <div class="head"><h2>Saved and made searchable</h2><span class="where">PostgreSQL + pgvector</span></div>
+        <div class="card">
+          <ul class="steps">
+            <li><span>Pages are stored with their method (text layer or OCR) and OCR confidence. Sheets are stored as grids</span></li>
+            <li><span>The text is split into chunks of about 1,200 characters with 150 characters of overlap, keyword-indexed, and embedded with <span class="mono">bge-small</span> for semantic search</span></li>
+            <li><span>Status <span class="status">processed</span>. The invoice job is queued next</span></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5 AI extraction -->
+    <section class="stage">
+      <div class="rail"><span class="num">5</span></div>
+      <div class="body">
+        <div class="head"><h2>AI invoice extraction</h2><span class="where">Claude, structured output</span></div>
+        <div class="card">
+          <div class="cols">
+            <ul class="steps">
+              <li><span>The document is rendered as text with page and sheet markers. Sheet rows read as <span class="mono">cell | cell | cell</span></span></li>
+              <li><span>Long documents are split into parts of 50,000 characters, up to 4 at a time and at most 120 parts. The parts are then merged</span></li>
+              <li><span>The reply must match the invoice schema. A value that isn't printed is <span class="mono">null</span>, never guessed. Doubtful fields are listed in <span class="mono">uncertain_fields</span></span></li>
+              <li><span>Normalised: blanks become null, currency codes are upper-cased, credit-note signs are made consistent</span></li>
+            </ul>
+<pre class="json" aria-label="Example extracted fields"><span class="n">{</span>
+  <span class="k">"invoice_number"</span>: "INV-2026-1042",
+  <span class="k">"invoice_date"</span>: "2026-11-15",
+  <span class="k">"vendor"</span>: { <span class="k">"name"</span>: "Delta Office Supplies Ltd." },
+  <span class="k">"customer"</span>: { <span class="k">"name"</span>: "Northstar Analytics Ltd." },
+  <span class="k">"currency"</span>: "BDT",
+  <span class="k">"subtotal"</span>: 17110.00,
+  <span class="k">"tax_amount"</span>: 812.73,
+  <span class="k">"total_amount"</span>: 17067.23,
+  <span class="k">"line_items"</span>: [ <span class="n">… 4 lines</span> ],
+  <span class="k">"uncertain_fields"</span>: []
+<span class="n">}</span></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6 validation -->
+    <section class="stage">
+      <div class="rail"><span class="num">6</span></div>
+      <div class="body">
+        <div class="head"><h2>Validation and review flags</h2><span class="where">exact decimals, ±0.01</span></div>
+        <div class="card">
+          <div class="scroll">
+            <table class="checks">
+              <thead><tr><th>Flag</th><th>Raised when</th><th>Severity</th><th>Applies to</th></tr></thead>
+              <tbody>
+                <tr><td>line_amounts</td><td>Quantity × unit price ≠ line amount</td><td><span class="sev e">error</span></td><td><span class="applies"><i class="p"></i><i class="m"></i><i class="s"></i></span></td></tr>
+                <tr><td>lines_subtotal</td><td>Sum of lines ≠ subtotal (or total, if lines include tax)</td><td><span class="sev e">error</span></td><td><span class="applies"><i class="p"></i><i class="m"></i><i class="s"></i></span></td></tr>
+                <tr><td>tax_amount</td><td>Line amount × tax rate summed ≠ tax</td><td><span class="sev e">error</span></td><td><span class="applies"><i class="p"></i><i class="m"></i><i class="s"></i></span></td></tr>
+                <tr><td>total</td><td>Subtotal + tax ≠ total</td><td><span class="sev e">error</span></td><td><span class="applies"><i class="p"></i><i class="m"></i><i class="s"></i></span></td></tr>
+                <tr><td>amount_due</td><td>Amount due is larger than the total</td><td><span class="sev e">error</span></td><td><span class="applies"><i class="p"></i><i class="m"></i><i class="s"></i></span></td></tr>
+                <tr><td>missing_fields</td><td>No invoice number, date, currency, total or vendor name</td><td><span class="sev e">error</span></td><td><span class="applies"><i class="p"></i><i class="m"></i><i class="s"></i></span></td></tr>
+                <tr><td>duplicate</td><td>Same file hash, or same vendor and invoice number</td><td><span class="sev e">error</span></td><td><span class="applies"><i class="p"></i><i class="m"></i><i class="s"></i></span></td></tr>
+                <tr><td>possible_duplicate</td><td>Same vendor, date and total, different number</td><td><span class="sev w">warning</span></td><td><span class="applies"><i class="p"></i><i class="m"></i><i class="s"></i></span></td></tr>
+                <tr><td>low_ocr_confidence</td><td>An OCR page scores below 80</td><td><span class="sev w">warning</span></td><td><span class="applies"><i class="p"></i><i class="m"></i></span> <small style="color:var(--muted)">scanned pages only</small></td></tr>
+                <tr><td>model_uncertain</td><td>The model listed fields it wasn't sure of</td><td><span class="sev w">warning</span></td><td><span class="applies"><i class="p"></i><i class="m"></i><i class="s"></i></span></td></tr>
+                <tr><td>not_invoice</td><td>Classified as a statement, quote or other document</td><td><span class="sev w">warning</span></td><td><span class="applies"><i class="p"></i><i class="m"></i><i class="s"></i></span></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="footer">A document needs review while any flag is unresolved. A check that lacks the values it needs is skipped, not failed.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 7 results -->
+    <section class="stage">
+      <div class="rail"><span class="num">7</span></div>
+      <div class="body">
+        <div class="head"><h2>Review, correct, search</h2><span class="where">React UI + REST API</span></div>
+        <div class="card">
+          <div class="cols">
+            <ul class="steps">
+              <li><span>Review queue lists every document with open flags</span></li>
+              <li><span>Corrections are saved with history, and every check runs again</span></li>
+            </ul>
+            <ul class="steps">
+              <li><span>Keyword and semantic search across all files</span></li>
+              <li><span>Cross-check documents: PDF against PDF, PDF against Excel</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- failure path -->
+    <section class="stage fail">
+      <div class="rail"><span class="num">!</span></div>
+      <div class="body">
+        <div class="head"><h2>When a step fails</h2><span class="where">any stage after upload</span></div>
+        <div class="card">
+          <ul class="steps">
+            <li><span>Temporary problems (timeouts, database or AI briefly unavailable) are retried with growing delays, up to 3 attempts</span></li>
+            <li><span>Permanent problems, or retries used up, set status <span class="status">failed</span> with a plain-language reason. A Retry button runs it again</span></li>
+            <li><span>Jobs whose worker died are picked up again automatically once their lease expires</span></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</div>
+</body>
+</html>

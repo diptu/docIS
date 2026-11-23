@@ -4,7 +4,7 @@ services:
   db:
     # postgres:18-alpine + pgvector (see db/Dockerfile).
     build: ./db
-    image: docis-db
+    image: ${DB_IMAGE:-docis-db}
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-docis}
@@ -25,13 +25,13 @@ services:
       context: .
       args:
         OCR_EXTRA_LANGS: ${OCR_EXTRA_LANGS:-}
-    image: docis-backend
+    image: ${BACKEND_IMAGE:-docis-backend}
     command: ["alembic", "upgrade", "head"]
     environment: &app-env
       APP_NAME: ${APP_NAME:-docIS}
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-docis}:${POSTGRES_PASSWORD:-docis}@db:5432/${POSTGRES_DB:-docis}
       CELERY_BROKER_URL: redis://redis:6379/0
-      MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-20}
+      MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-50}
       MAX_FILES_PER_UPLOAD: ${MAX_FILES_PER_UPLOAD:-20}
       JOB_MAX_ATTEMPTS: ${JOB_MAX_ATTEMPTS:-3}
       JOB_RETRY_BASE_SECONDS: ${JOB_RETRY_BASE_SECONDS:-30}
@@ -42,11 +42,14 @@ services:
     restart: "no"
 
   api:
-    image: docis-backend
+    image: ${BACKEND_IMAGE:-docis-backend}
     restart: unless-stopped
     environment:
       <<: *app-env
       STORAGE_DIR: /app/storage
+      # Requests from the web service arrive through its nginx proxy, which
+      # appends the browser's address to X-Forwarded-For.
+      RATE_LIMIT_TRUSTED_PROXY_HOPS: ${RATE_LIMIT_TRUSTED_PROXY_HOPS:-1}
     volumes:
       - documents-data:/app/storage
     ports:
@@ -58,6 +61,21 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+
+  # The web app: the built frontend, served by nginx, which forwards /api
+  # to the API service. Open http://localhost:8080.
+  web:
+    build: ../frontend
+    image: ${FRONTEND_IMAGE:-docis-frontend}
+    restart: unless-stopped
+    environment:
+      API_UPSTREAM: http://api:8000
+      MAX_UPLOAD_SIZE: ${WEB_MAX_UPLOAD_SIZE:-1100m}
+    ports:
+      - "${WEB_PORT:-8080}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
 
   # Message broker for Celery. Append-only persistence keeps queued tasks
   # across a Redis restart.
@@ -79,7 +97,7 @@ services:
   # Celery worker: runs document processing tasks. Scale with
   #   docker compose up -d --scale worker=3
   worker:
-    image: docis-backend
+    image: ${BACKEND_IMAGE:-docis-backend}
     command:
       - celery
       - -A
@@ -128,7 +146,7 @@ services:
   # Celery beat: schedules documents.recover, which re-dispatches jobs whose
   # task message was lost and recovers jobs whose worker died. Run exactly one.
   beat:
-    image: docis-backend
+    image: ${BACKEND_IMAGE:-docis-backend}
     command:
       - celery
       - -A

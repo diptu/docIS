@@ -17,6 +17,13 @@ from app.processing.ocr import (
     page_rotation,
     prepare_image,
 )
+from evaluation.ocr_benchmark import (
+    CASES,
+    KEY_VALUES,
+    LAYOUTS,
+    degrade,
+    make_page,
+)
 from tests.support.helpers import (
     concat_pdfs,
     encode,
@@ -306,3 +313,66 @@ def test_digital_pdf_does_not_invoke_ocr(
 def test_unsupported_media_type_raises(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="No extractor"):
         extract_content(write(tmp_path, b"PK"), "application/zip", CONFIG)
+
+
+# ------------------------------------------- poor-quality photos (regression)
+
+# Every case of the OCR benchmark (python -m evaluation ocr) that the full
+# clean-up reads completely, on both a sparse page (a few lines: receipts,
+# short invoices) and a dense one. Before the fix, dark or grainy sparse
+# pages came back empty.
+POOR_QUALITY = [
+    "low resolution",
+    "tilted 4°",
+    "blurred",
+    "shadow",
+    "dark",
+    "dark, grainy",
+    "dark, very grainy",
+    "very dark",
+    "grainy, white paper",
+    "shadow, grainy, tilted",
+    "phone photo",
+    "dark, grainy, low-res, tilted",
+    "harsh: tiny, dark, grainy",
+]
+
+
+@requires_tesseract
+@pytest.mark.parametrize("layout", ["sparse", "dense"])
+@pytest.mark.parametrize("case", POOR_QUALITY)
+def test_poor_quality_photos_are_read(layout: str, case: str) -> None:
+    photo = degrade(make_page(LAYOUTS[layout]), CASES[case])
+
+    result = ocr_image(photo, CONFIG)
+
+    missing = [value for value in KEY_VALUES if value not in result.text]
+    assert missing == []
+    assert result.confidence is not None and result.confidence > 80
+
+
+@requires_tesseract
+def test_clean_up_rescues_dark_grainy_sparse_photos() -> None:
+    """Without clean-up Tesseract reads nothing from this photo."""
+    photo = degrade(make_page(LAYOUTS["sparse"]), CASES["dark, very grainy"])
+    plain = OcrConfig(enhance_images=False, detect_orientation=False)
+
+    assert ocr_image(photo, plain).text == ""
+    assert all(value in ocr_image(photo, CONFIG).text for value in KEY_VALUES)
+
+
+def test_small_images_are_enlarged_before_clean_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Clean-up on 15-pixel glyphs erodes them; it runs on the enlarged copy."""
+    sizes: list[tuple[int, int]] = []
+
+    def record(image: Image.Image) -> Image.Image:
+        sizes.append(image.size)
+        return image
+
+    monkeypatch.setattr(ocr, "enhance", record)
+
+    prepare_image(Image.new("RGB", (500, 200), "white"))
+
+    assert sizes == [(1500, 600)]

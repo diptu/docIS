@@ -1,0 +1,48 @@
+# Serves the built single-page app and forwards /api to the backend, so the
+# browser talks to one origin (no CORS). ${...} values come from the
+# environment when the container starts (see the Dockerfile).
+server {
+    listen 8080;
+    server_name _;
+    root /usr/share/nginx/html;
+
+    client_max_body_size ${MAX_UPLOAD_SIZE};
+    server_tokens off;
+
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    # /api/documents -> ${API_UPSTREAM}/documents
+    location /api/ {
+        proxy_pass ${API_UPSTREAM}/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # Stream large uploads straight through; allow slow processing calls.
+        proxy_request_buffering off;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+
+    # Hashed build assets never change.
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        add_header X-Content-Type-Options "nosniff" always;
+    }
+
+    # Client-side routes (/documents/:id, /search, ...) load the app.
+    location / {
+        try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    }
+}

@@ -127,7 +127,7 @@ The variables you usually need to change:
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` / `POSTGRES_PORT` | `docis` / `docis` / `docis` / `5434` | Credentials and host port for the Docker database. If you change them, update `DATABASE_URL` to match. **Use a strong password** anywhere other than your own machine. |
 | `CELERY_BROKER_URL` | `redis://localhost:6379/0` | When Redis runs somewhere else. |
 | `STORAGE_DIR` | `storage` | Where uploaded originals are kept. |
-| `MAX_UPLOAD_SIZE_MB` / `MAX_FILES_PER_UPLOAD` | `20` / `20` | Upload limits. |
+| `MAX_UPLOAD_SIZE_MB` / `MAX_FILES_PER_UPLOAD` | `50` / `20` | Upload limits. |
 | `OCR_LANGUAGES` / `OCR_EXTRA_LANGS` | `eng` / *(empty)* | To add OCR languages, e.g. `OCR_LANGUAGES=eng+deu` and `OCR_EXTRA_LANGS="deu"`. The languages must also be installed in Tesseract or built into the Docker image. |
 | `SEMANTIC_SEARCH_ENABLED` | `true` | Set to `false` to skip embeddings; keyword search still works. |
 | `INVOICE_EXTRACTION_ENABLED` | `true` | Set to `false` to run without an Anthropic key. Text extraction, OCR and search still work, but no invoice fields are extracted. |

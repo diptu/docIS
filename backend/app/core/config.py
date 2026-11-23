@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     storage_dir: Path = Path("storage")
     # Upload limits (MAX_UPLOAD_SIZE_MB, MAX_FILES_PER_UPLOAD). The size is
     # per file, in MiB, and may be fractional (e.g. 0.5).
-    max_upload_size_mb: float = Field(default=20, gt=0)
+    max_upload_size_mb: float = Field(default=50, gt=0)
     max_files_per_upload: int = Field(default=20, gt=0)
 
     # Rate limiting per client IP (app/api/rate_limit.py). The processing

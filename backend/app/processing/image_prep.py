@@ -18,21 +18,30 @@ import numpy as np
 from PIL import Image, ImageFilter, ImageOps
 
 # --- noise -------------------------------------------------------------
-# Mean absolute difference between the image and its 3x3 median, on a
-# central crop. Clean renders and scans score ~0-2; sensor noise scores
-# higher. Noise is only removed from images that are about to be brightened
-# (see ``normalize_illumination``): brightening multiplies it, while on
-# white paper Tesseract copes with it better than with the thin strokes and
-# decimal points a median filter erodes.
-NOISE_THRESHOLD = 4.0
-NOISE_SAMPLE = 512
-# Brightening gain (white / median paper brightness) above which noise is
-# removed first.
-NOISE_BRIGHTENING_GAIN = 1.5
+# Grain is measured with Immerkaer's Laplacian-difference estimator, which
+# cancels smooth content and keeps pixel-to-pixel fluctuation, including
+# the fine grain JPEG compression leaves behind (a 3x3 median comparison
+# misses it). The strongest responses (text edges) are ignored, and the
+# result is scaled to a white page: grain on dark paper is amplified by
+# the brightening that follows, so it counts for more. Clean scans, PDF
+# renders and resized text score below ~1.5; visible grain scores 3+.
+NOISE_THRESHOLD = 2.5
+NOISE_SAMPLE = 1024
+# Share of the strongest Laplacian responses (text edges) left out.
+NOISE_EDGE_SHARE = 0.1
+# Grain is also measured on every 2nd..4th pixel: in an image that was
+# enlarged (small photos are, before OCR) each grain is a blob several
+# pixels wide, which a pixel-scale measure sees as smooth.
+NOISE_STRIDES = (1, 2, 3, 4)
+# Noise is only removed from images whose lighting is about to be
+# corrected (see ``normalize_illumination``): brightening multiplies it,
+# while on white paper Tesseract copes with it better than with the thin
+# strokes and decimal points a median filter erodes.
 
 # --- illumination and contrast ------------------------------------------
-# The background (paper) is estimated on a small copy: a max filter wipes
-# out the dark text strokes, a blur smooths what is left.
+# The background (paper) is estimated on a small, box-averaged copy (the
+# averaging cancels grain), then a max filter wipes out the dark text
+# strokes and a blur smooths what is left.
 BACKGROUND_SIDE = 400
 BACKGROUND_MAX_FILTER = 9
 BACKGROUND_BLUR = 12
@@ -40,8 +49,17 @@ BACKGROUND_BLUR = 12
 # or varies more than this across the page.
 BACKGROUND_DARK = 200
 BACKGROUND_UNEVEN = 40
-# Percent of darkest/lightest pixels ignored when stretching the contrast.
+# Percent of the lightest pixels ignored when stretching the contrast. The
+# dark end is not clipped: on a sparse page (a receipt, a short invoice)
+# text is under 0.5% of the pixels, and clipping there would stretch paper
+# grain to black instead of the text.
 CONTRAST_CUTOFF = 0.5
+# After flattening, paper within this many grain deviations (pixel-level
+# fluctuation, as for noise) of its median brightness is pushed to pure
+# white, so leftover grain does not read as ink. Skipped when the estimated
+# paper level is implausibly dark.
+PAPER_WHITE_SIGMAS = 2.0
+PAPER_MIN_WHITE = 64.0
 
 # --- deskew --------------------------------------------------------------
 SKEW_SIDE = 1000
@@ -73,14 +91,51 @@ def _from_array(array: np.ndarray) -> Image.Image:
     return Image.fromarray(np.clip(array, 0, 255).astype(np.uint8), mode="L")
 
 
-def noise_level(image: Image.Image) -> float:
-    """Mean absolute difference from a 3x3 median filter, on a central crop."""
+def _central_crop(image: Image.Image, side: int) -> Image.Image:
     width, height = image.size
-    side = min(NOISE_SAMPLE, width, height)
+    side = min(side, width, height)
     left, top = (width - side) // 2, (height - side) // 2
-    crop = image.crop((left, top, left + side, top + side))
-    smoothed = crop.filter(ImageFilter.MedianFilter(3))
-    return float(np.abs(_to_array(crop) - _to_array(smoothed)).mean())
+    return image.crop((left, top, left + side, top + side))
+
+
+def _grain_sigma(pixels: np.ndarray) -> float:
+    """Immerkaer's estimate of the grain's standard deviation."""
+    response = np.abs(
+        pixels[:-2, :-2]
+        - 2 * pixels[:-2, 1:-1]
+        + pixels[:-2, 2:]
+        - 2 * pixels[1:-1, :-2]
+        + 4 * pixels[1:-1, 1:-1]
+        - 2 * pixels[1:-1, 2:]
+        + pixels[2:, :-2]
+        - 2 * pixels[2:, 1:-1]
+        + pixels[2:, 2:]
+    )
+    cutoff = np.percentile(response, 100 * (1 - NOISE_EDGE_SHARE))
+    kept = response[response <= cutoff]
+    # 6 = sqrt of the kernel's sum of squared weights; sqrt(pi/2) turns a
+    # mean absolute deviation into a standard deviation.
+    return math.sqrt(math.pi / 2) * float(kept.mean()) / 6
+
+
+def _grain(image: Image.Image) -> float:
+    """Grain standard deviation in 8-bit levels, on a central crop: the
+    strongest of several pixel strides (Immerkaer's estimator, text edges
+    excluded). Smooth structure (lighting, moire, page edges) does not count."""
+    pixels = _to_array(_central_crop(image, NOISE_SAMPLE))
+    strides = [s for s in NOISE_STRIDES if min(pixels.shape) // s >= 3]
+    if not strides:
+        return 0.0
+    return max(_grain_sigma(pixels[::s, ::s]) for s in strides)
+
+
+def noise_level(image: Image.Image) -> float:
+    """Grain strength relative to white paper: the grain's standard
+    deviation in 8-bit levels, scaled as if the paper were white."""
+    paper = max(
+        float(np.percentile(_to_array(_central_crop(image, NOISE_SAMPLE)), 90)), 1.0
+    )
+    return _grain(image) * 255.0 / paper
 
 
 def reduce_noise(image: Image.Image) -> Image.Image:
@@ -97,29 +152,51 @@ def estimate_background(image: Image.Image) -> Image.Image:
     if scale < 1:
         small = image.resize(
             (max(1, round(image.width * scale)), max(1, round(image.height * scale))),
-            Image.Resampling.BILINEAR,
+            Image.Resampling.BOX,
         )
     small = small.filter(ImageFilter.MaxFilter(BACKGROUND_MAX_FILTER))
     small = small.filter(ImageFilter.GaussianBlur(BACKGROUND_BLUR))
     return small.resize(image.size, Image.Resampling.BILINEAR)
 
 
+def whiten_paper(image: Image.Image) -> Image.Image:
+    """Push paper, grain included, to pure white.
+
+    The paper level is the median brightness (paper is most of any page);
+    the grain is measured like ``noise_level``, as pixel-to-pixel
+    fluctuation, so broad structure (a dark surround, moire on a photo of a
+    screen, light grey text) does not count. Everything within
+    ``PAPER_WHITE_SIGMAS`` grain deviations of the paper becomes white and
+    darker tones are stretched to match, so text keeps its contrast while
+    the grain between it disappears.
+    """
+    pixels = _to_array(image)
+    paper = float(np.median(pixels))
+    white = paper - PAPER_WHITE_SIGMAS * _grain(image)
+    if white <= PAPER_MIN_WHITE or white >= 255.0:
+        return image
+    return _from_array(pixels * (255.0 / white))
+
+
 def normalize_illumination(image: Image.Image) -> Image.Image:
-    """Flatten shadows and lift dark photos, then stretch the contrast.
+    """Flatten shadows and lift dark photos, then stretch the contrast and
+    whiten the paper.
 
     Dividing by the estimated background turns unevenly lit paper into an
     even white while keeping text dark. Evenly lit, white paper is left as
     it is (dark header bars with white text would otherwise be washed out).
-    A dark, grainy image is denoised first, so the grain is not amplified.
+    A grainy image is denoised first, so the grain is not amplified.
     """
     background = _to_array(estimate_background(image))
-    low, median, high = np.percentile(background, [5, 50, 95])
+    low, high = np.percentile(background, [5, 95])
     if low >= BACKGROUND_DARK and high - low <= BACKGROUND_UNEVEN:
         return image
-    if 255.0 / max(float(median), 1.0) >= NOISE_BRIGHTENING_GAIN:
-        image = reduce_noise(image)
+    image = reduce_noise(image)
     flattened = _to_array(image) / np.maximum(background, 1.0) * 255.0
-    return ImageOps.autocontrast(_from_array(flattened), cutoff=CONTRAST_CUTOFF)
+    stretched = ImageOps.autocontrast(
+        _from_array(flattened), cutoff=(0, CONTRAST_CUTOFF)
+    )
+    return whiten_paper(stretched)
 
 
 def _ink_mask(image: Image.Image) -> np.ndarray:

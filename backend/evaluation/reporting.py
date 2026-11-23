@@ -5,6 +5,7 @@ Where evaluations read their inputs and write their results.
     results/validation_results.json   last validation run: metrics + misses
     results/evaluation_summary.json   headline figures of both, rebuilt after each run
     results/evaluation_report.html    readable report of both, rebuilt after each run
+    results/ocr_preprocessing.json    OCR on poor-quality images (evaluation ocr)
 """
 
 import json
@@ -20,6 +21,7 @@ EXTRACTION_RESULTS = "extraction_results.json"
 VALIDATION_RESULTS = "validation_results.json"
 EVALUATION_SUMMARY = "evaluation_summary.json"
 EVALUATION_REPORT = "evaluation_report.html"
+OCR_RESULTS = "ocr_preprocessing.json"
 
 
 def write_json(path: Path, content: Any) -> None:

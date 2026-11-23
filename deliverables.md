@@ -435,7 +435,7 @@ The JSON results and HTML report can be regenerated with `task eval-3p-validate`
 
 Since then, only targeted checks have been run on the current code:
 - **Credit notes:** 10 of 10 fully correct, up from 0 of 10.
-- **OCR:** 81.3% of known values found in the OCR text, up from 70.3%.
+- **OCR:** 81.3% of known values found in the OCR text, up from 70.3%. After the 23 November fix for dark, grainy pages: 81.9%, with dark photos at 100% and skew and noise at 97.9% (see *OCR on poor-quality images*).
 - **Long documents:** split and merged extraction matched one-call results on every invoice that ran.
 
 Those checks are reported in their own sections below. The full 181-document evaluation has not been re-run on the current code: it costs about $4–5 (`task eval-3p`), and the API credit ran out. Until it is re-run, the headline table describes the earlier version.
@@ -566,6 +566,50 @@ This was measured after adding image clean-up. It checks OCR output only, with n
 - **Worse:** 2 documents, each missing one character of the invoice number.
 - **Not yet measured:** the Claude extraction evaluation above was run before this change and has not been re-run.
 
+#### OCR on poor-quality images (skew, blur, low resolution, dark, noisy)
+
+Measured on 23 November 2026 on the current code, with `task eval-3p-ocr` (free; Tesseract only, no Claude calls). The scoring is the same as in the OCR clean-up benchmark above: a value counts as read when it appears in the OCR text (the invoice number, subtotal, tax, total and every line amount). Each defect group has two kinds of real photo or scan from the third-party dataset, each at mild, moderate and severe strength. Results are in `backend/evaluation/third_party_eval/results/ocr_preprocessing.json`; the HTML report has the same tables.
+
+**Real documents, by defect** (values read, with clean-up):
+
+| Defect | Documents | Mild | Moderate | Severe | No clean-up | Previous version | **Current** |
+|---|---|---|---|---|---|---|---|
+| Skew | small rotation, wrong orientation (6) | 100% | 100% | 94% | 66.7% | 97.9% | **97.9%** |
+| Blur | defocus, motion (6) | 81% | 25% | 0% | 35.4% | 35.4% | **35.4%** |
+| Low resolution | low resolution, heavy JPEG (6) | 100% | 88% | 81% | 89.6% | 89.6% | **89.6%** |
+| Dark | low light, shadow (6) | 100% | 100% | 100% | 66.7% | 97.9% | **100%** |
+| Noisy | noisy scan, fax (6) | 100% | 100% | 94% | 97.9% | 97.9% | **97.9%** |
+| All photos | 45 docs, 360 values | | | | 73.1% | 85.0% | **86.1%** |
+| All OCR documents | 68 docs, 535 values | | | | 73.1% | 81.1% | **81.9%** |
+
+- **Columns:** *No clean-up* is Tesseract on the raw image. *Previous version* is the clean-up before the fix for dark, grainy pages (it reproduces the 81.3% above to within one value).
+- **Changes against the previous version:** three documents gained values (severe low light 7→8 of 8, severe combined defects 0→3, severe perspective 6→7) and one lost a value (severe screen photo 7→6).
+- **Now read:** `photo-rotate-small-severe`, which failed in the extraction run, now gives 15 of 16 values for severe skew.
+
+**Synthetic severity sweeps.** Generated invoice pages with one defect at a time, so the point where reading breaks down is visible. Sparse pages (a few lines, like a receipt) and dense pages (with line items) are pooled, with 6 key values per page.
+
+| Defect | Severity | No clean-up | **With clean-up** | Confidence |
+|---|---|---|---|---|
+| Skew | 2° / 5° / 10° / 15° | 100 / 67 / 0 / 0% | **100 / 100 / 100 / 100%** | 95 |
+| Blur | radius 1 / 2 / 3 px | 100 / 100 / 100% | **100 / 100 / 100%** | 94 / 94 / 83 |
+| Low resolution | 100 / 70 / 50 DPI | 100 / 100 / 100% | **100 / 100 / 100%** | 94 / 94 / 85 |
+| Dark | 60 / 40 / 25% light | 100 / 100 / 100% | **100 / 100 / 100%** | 95 |
+| Noisy | grain σ 10 / 20 / 35 | 100 / 100 / 50% | **100 / 100 / 50%** | 95 / 95 / 47 |
+| Dark + noisy | 60%·σ10 / 45%·σ18 / 35%·σ25 | 100 / 0 / 0% | **100 / 100 / 100%** | 95 |
+
+**What each clean-up step adds** (combined defects such as tiny, dark, grainy or tilted phone photos; the stages are cumulative):
+
+| Page | Raw | Lighting | + Denoise | + Paper white | Full (+ deskew) |
+|---|---|---|---|---|---|
+| Sparse (receipt-like) | 72% | 67% | 80% | 99% | **99%** |
+| Dense (with line items) | 97% | 98% | 97% | 98% | **99%** |
+
+**Where OCR still struggles:**
+- **Blur** is the weak spot on real photos. Synthetic blur up to a 3-pixel radius is still read, but real motion and defocus blur lose 75% of the values at moderate strength and all of them when severe. The clean-up does not sharpen images.
+- **Very heavy grain** on white paper (σ 35) loses half the values.
+- **Handwritten invoices** remain at 16%.
+- **Review:** documents that are read poorly get low OCR confidence and are flagged for manual review (`REVIEW_MIN_OCR_CONFIDENCE`, 80).
+
 #### Known limitations
 - **Credit notes (fixed since this run):**
   - In the run above, 7 of 10 were classified as "not an invoice", because the schema defined an invoice as "requesting payment". The other 3 had negative amounts where the ground truth is positive.
@@ -573,7 +617,8 @@ This was measured after adding image clean-up. It checks OCR output only, with n
   - The full 181-document evaluation has not been re-run since.
 - **Images:**
   - Handwritten and damaged photos cause OCR misreads.
-  - Perspective distortion (a page photographed at an angle on a table) is not corrected, and blurred photos remain hard to read.
+  - Perspective distortion (a page photographed at an angle on a table) is not corrected.
+  - Blurred photos remain hard to read: 35.4% of values on real defocus and motion blur, 0% when severe (see *OCR on poor-quality images*).
 - **Multi-currency invoices:** the model sometimes picks the foreign currency.
 - **Validation false alarms:** the arithmetic checks raise false alarms (9.5%), mostly on the `total` check for invoices with credits, freight or surcharges.
 - **Review flags on real extractions:** flags raised on the model's actual output are noisier than in the injected-error test. They caught 5 of 7 documents that should have been flagged, with 39 false alarms out of 177 (11.4% precision).

@@ -62,8 +62,13 @@ class OcrResult:
 
 def prepare_image(image: Image.Image, enhance_image: bool = True) -> Image.Image:
     """Normalise an image for OCR: EXIF orientation, transparent background,
-    grayscale, then (optionally) noise, lighting, contrast and skew
-    correction (see ``image_prep``), and finally a minimum size."""
+    grayscale, a minimum size, then (optionally) noise, lighting, contrast
+    and skew correction (see ``image_prep``).
+
+    Small images are enlarged before the clean-up: a median filter or a
+    contrast stretch on 15-pixel glyphs erodes them, while on the enlarged
+    copy the same steps leave the strokes intact (measured on low-resolution,
+    grainy photos)."""
     image = ImageOps.exif_transpose(image)
     if image.mode in ("RGBA", "LA", "PA") or "transparency" in image.info:
         # Flatten onto white; otherwise transparent areas turn black.
@@ -71,8 +76,6 @@ def prepare_image(image: Image.Image, enhance_image: bool = True) -> Image.Image
         background = Image.new("RGBA", rgba.size, "white")
         image = Image.alpha_composite(background, rgba)
     image = image.convert("L")
-    if enhance_image:
-        image = enhance(image)
 
     long_side = max(image.size)
     if 0 < long_side < MIN_OCR_LONG_SIDE:
@@ -80,6 +83,8 @@ def prepare_image(image: Image.Image, enhance_image: bool = True) -> Image.Image
         image = image.resize(
             (image.width * factor, image.height * factor), Image.Resampling.LANCZOS
         )
+    if enhance_image:
+        image = enhance(image)
     return image
 
 

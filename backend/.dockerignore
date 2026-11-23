@@ -27,3 +27,9 @@ docs/
 Dockerfile
 compose.yaml
 Taskfile.yml
+
+# Not needed at runtime. evaluation/ also holds third-party documents whose
+# licence is unknown: they must never be shipped in an image.
+evaluation/
+db/
+render.yaml

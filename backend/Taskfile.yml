@@ -196,6 +196,16 @@ tasks:
     cmds:
       - uv run python -m evaluation validate
 
+  eval-ocr:
+    desc: Measure OCR on skewed, blurred, low-res, dark and noisy images (synthetic; free)
+    cmds:
+      - uv run python -m evaluation ocr {{.CLI_ARGS}}
+
+  eval-3p-ocr:
+    desc: OCR on poor images, plus the third-party photos and scans by defect (free)
+    cmds:
+      - uv run python -m evaluation ocr --dataset evaluation/third_party_eval/dataset --out evaluation/third_party_eval/results {{.CLI_ARGS}}
+
   eval-report:
     desc: Rebuild the HTML evaluation reports (synthetic and third-party)
     cmds:

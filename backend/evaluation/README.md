@@ -31,6 +31,8 @@ task eval-check               # harness check with an "oracle" model (free; expe
 task eval                     # real run with Claude (costs money; needs ANTHROPIC_API_KEY)
 task eval -- --limit 10       # a smaller (cheaper) run
 task eval-validate            # amount-check evaluation (free, no model)
+task eval-ocr                 # OCR on skewed/blurred/low-res/dark/noisy images (free)
+task eval-3p-ocr              # ...plus the third-party photos and scans by defect (free)
 ```
 
 Each run overwrites its own results file and rebuilds `evaluation_summary.json`

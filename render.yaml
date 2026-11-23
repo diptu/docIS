@@ -70,7 +70,7 @@ services:
         value: /app/storage
       # Upload limits: MB per file, files per request.
       - key: MAX_UPLOAD_SIZE_MB
-        value: "20"
+        value: "50"
       - key: MAX_FILES_PER_UPLOAD
         value: "20"
       # One task at a time keeps memory predictable on 2 GB; raise it on a

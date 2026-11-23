@@ -5,6 +5,7 @@ Command line: generate a dataset, or run an evaluation.
     uv run python -m evaluation run --llm oracle      # harness check, free
     uv run python -m evaluation run --llm claude --yes  # real, costs money
     uv run python -m evaluation validate              # amount checks, free
+    uv run python -m evaluation ocr                   # OCR on poor images, free
 
 Results go to evaluation/results/: extraction_results.json,
 validation_results.json and evaluation_summary.json (both, in brief).
@@ -124,7 +125,32 @@ def main(argv: list[str] | None = None) -> int:
     val.add_argument("--expectations", type=Path, default=None)
     val.add_argument("--out", type=Path, default=RESULTS_DIR, help="results folder")
 
+    ocr = commands.add_parser(
+        "ocr", help="measure OCR on skewed, blurred, low-res, dark and noisy images"
+    )
+    ocr.add_argument("--layout", choices=["sparse", "dense", "both"], default="both")
+    ocr.add_argument(
+        "--dataset",
+        type=Path,
+        default=None,
+        help="labelled dataset whose photos and scans to OCR as well "
+        "(e.g. evaluation/third_party_eval/dataset)",
+    )
+    ocr.add_argument("--out", type=Path, default=RESULTS_DIR, help="results folder")
+
     args = parser.parse_args(argv)
+    if args.command == "ocr":
+        from evaluation import ocr_benchmark
+
+        layouts = ["sparse", "dense"] if args.layout == "both" else [args.layout]
+        measured = ocr_benchmark.run(layouts, args.dataset)
+        path = ocr_benchmark.write_results(measured, args.out)
+        print(ocr_benchmark.render_markdown(measured))
+        from evaluation.html_report import write_report
+
+        print(f"\nResults: {path}\nReport: {write_report(args.out)}")
+        return 0
+
     if args.command == "generate":
         paths = generate(args.dataset, args.count, args.seed, args.expectations)
         print(f"Wrote {len(paths)} labelled cases to {args.dataset}")

@@ -24,11 +24,17 @@ def test_database_url_uses_the_asyncpg_driver(given: str, expected: str) -> None
     assert Settings(database_url=given).database_url == expected
 
 
-def test_upload_limit_defaults_to_20_mb_per_file() -> None:
-    settings = Settings(database_url="sqlite+aiosqlite://")
+def test_upload_limit_defaults_to_50_mb_per_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Large scanned PDFs (hundreds of pages) fit under the default."""
+    monkeypatch.delenv("MAX_UPLOAD_SIZE_MB", raising=False)
+    monkeypatch.delenv("MAX_FILES_PER_UPLOAD", raising=False)
+    # Ignore a developer's local .env, which may set its own limits.
+    settings = Settings(database_url="sqlite+aiosqlite://", _env_file=None)
 
-    assert settings.max_upload_size_mb == 20
-    assert settings.max_upload_size_bytes == 20 * 1024 * 1024
+    assert settings.max_upload_size_mb == 50
+    assert settings.max_upload_size_bytes == 50 * 1024 * 1024
     assert settings.max_files_per_upload == 20
 
 

@@ -20,6 +20,7 @@ from typing import Any
 from evaluation.reporting import (
     EVALUATION_REPORT,
     EXTRACTION_RESULTS,
+    OCR_RESULTS,
     VALIDATION_RESULTS,
 )
 
@@ -134,6 +135,136 @@ def _section(title: str, body: str, intro: str = "") -> str:
 
 def _empty(message: str) -> str:
     return f'<p class="empty">{escape(message)}</p>'
+
+
+# --- OCR on poor-quality images -------------------------------------------
+
+
+def _share(totals: dict[str, Any]) -> float | None:
+    accuracy = totals.get("accuracy")
+    return None if accuracy is None else accuracy * 100
+
+
+def _before_after(totals_raw: dict[str, Any], totals_full: dict[str, Any]) -> str:
+    return (
+        f'<span class="muted">{_pct(_share(totals_raw))} →</span> '
+        f"<b>{_pct(_share(totals_full))}</b>"
+    )
+
+
+def _ocr(run: dict[str, Any]) -> str:
+    from evaluation.ocr_benchmark import document_table, sweep_table
+
+    parts = []
+    documents = run.get("documents")
+    if documents:
+        rows = document_table(documents)
+        overall = next(r for r in rows if r["group"] == "All OCR documents")
+        families = [r for r in rows if r["severity"] == "all"]
+        parts.append(
+            _tiles(
+                [
+                    _tile(
+                        r["group"],
+                        _pct(_share(r["full"])),
+                        f"{r['documents']} docs · {_pct(_share(r['raw']))} "
+                        "without clean-up",
+                    )
+                    for r in families
+                    if not r["group"].startswith("All ") or r is overall
+                ]
+            )
+        )
+        by_family: dict[str, dict[str, dict[str, Any]]] = {}
+        for r in rows:
+            by_family.setdefault(r["group"], {})[r["severity"]] = r
+        table_rows = []
+        for group, severities in by_family.items():
+            cells: list[object] = [escape(group)]
+            for severity in ("mild", "moderate", "severe"):
+                level = severities.get(severity)
+                cells.append(
+                    _before_after(level["raw"], level["full"])
+                    if level
+                    else '<span class="null">—</span>'
+                )
+            whole = severities["all"]
+            cells += [
+                _meter_cell(_share(whole["full"]), f"{group}, with clean-up"),
+                _num(whole["documents"]),
+            ]
+            table_rows.append(cells)
+        parts.append(
+            _table(
+                ["Defect", "Mild", "Moderate", "Severe", "All", "Docs"],
+                table_rows,
+                numeric=(5,),
+                caption=(
+                    "Real photographed and scanned invoices from the labelled "
+                    "dataset. Share of the invoice number, subtotal, tax, total and "
+                    "line amounts found in the OCR text: without clean-up → with "
+                    "clean-up (production). Each defect group has two kinds of "
+                    "document (e.g. small rotation and wrong orientation for skew) "
+                    "at three severities."
+                ),
+            )
+        )
+    sweeps = run.get("sweeps")
+    if sweeps:
+        sweep_rows = [
+            [
+                escape(r["defect"]),
+                escape(r["severity"]),
+                _pct(_share(r["raw"])),
+                _meter_cell(_share(r["full"]), f"{r['defect']} {r['severity']}"),
+                f"{r['raw']['mean_confidence']:.0f} → "
+                f"{r['full']['mean_confidence']:.0f}",
+            ]
+            for r in sweep_table(sweeps)
+        ]
+        parts.append(
+            _table(
+                ["Defect", "Severity", "No clean-up", "With clean-up", "Confidence"],
+                sweep_rows,
+                numeric=(2, 4),
+                caption=(
+                    "Synthetic invoice pages with one defect at a time, sparse "
+                    "(a few lines) and dense (with line items) pooled. Share of 6 "
+                    "key values read per page; confidence is Tesseract's mean word "
+                    "confidence (0-100)."
+                ),
+            )
+        )
+    ablation = run.get("ablation")
+    if ablation:
+        stages = ablation["stages"]
+        parts.append(
+            _table(
+                ["Page", *stages],
+                [
+                    [escape(layout)]
+                    + [
+                        _meter_cell(_share(totals[stage]), f"{layout} {stage}")
+                        for stage in stages
+                    ]
+                    for layout, totals in ablation["summary"].items()
+                ],
+                caption=(
+                    "What each clean-up step adds, on combined defects (dark, "
+                    "grainy, shadowed, tilted, tiny phone photos). Stages are "
+                    "cumulative: raw → illumination → + denoise → + paper white → "
+                    "full (+ deskew)."
+                ),
+            )
+        )
+    intro = (
+        "OCR only, no model calls: how much of an invoice's key values Tesseract "
+        "reads from skewed, blurred, low-resolution, dark and noisy images, without "
+        "and with the image clean-up the pipeline runs before OCR (noise removal, "
+        "lighting and contrast correction, paper whitening, deskew and orientation "
+        f"detection). Measured {_when(run.get('generated_at'))}."
+    )
+    return _section("OCR on poor-quality images", "".join(parts), intro)
 
 
 # --- Extraction -------------------------------------------------------------
@@ -535,6 +666,7 @@ def render(results_dir: Path) -> str:
     """The report page for the runs in ``results_dir``."""
     extraction = _read(results_dir / EXTRACTION_RESULTS)
     validation = _read(results_dir / VALIDATION_RESULTS)
+    ocr = _read(results_dir / OCR_RESULTS)
     parts, links = [], []
     if extraction:
         parts.append(
@@ -550,6 +682,9 @@ def render(results_dir: Path) -> str:
             f'<div class="part" id="validation">{_validation(validation)}</div>'
         )
         links.append('<a href="#validation">Validation</a>')
+    if ocr:
+        parts.append(f'<div class="part" id="ocr">{_ocr(ocr)}</div>')
+        links.append('<a href="#ocr">OCR on poor images</a>')
     if not parts:
         parts.append(
             _empty(
@@ -570,7 +705,7 @@ def render(results_dir: Path) -> str:
 <main>
 <header>
 <h1>Evaluation report</h1>
-<p>Invoice extraction and amount-check accuracy ·
+<p>Invoice extraction, amount-check and OCR accuracy ·
 <code>{escape(str(results_dir))}</code></p>
 <nav>{"".join(links)}</nav>
 </header>

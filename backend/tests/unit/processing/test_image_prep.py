@@ -10,12 +10,15 @@ from app.processing.image_prep import (
     deskew,
     detect_skew,
     enhance,
+    estimate_background,
     noise_level,
     normalize_illumination,
     reduce_noise,
     rotate_upright,
+    whiten_paper,
 )
-from tests.support.helpers import make_text_image
+from evaluation.ocr_benchmark import HEADER, PhotoDefects, degrade, make_page
+from tests.support.helpers import encode, make_text_image
 
 LINES = [
     "ACME GmbH Invoice 2026-001",
@@ -117,6 +120,80 @@ def test_dark_photos_are_brightened_and_stretched() -> None:
     assert pixels(fixed).min() < 40  # and text is black
 
 
+def test_grain_does_not_inflate_the_background_estimate() -> None:
+    rng = np.random.default_rng(0)
+    paper = Image.fromarray(
+        np.clip(150 + rng.normal(0, 15, (1100, 850)), 0, 255).astype(np.uint8), "L"
+    )
+
+    background = pixels(estimate_background(paper))
+
+    # A max filter on the raw grain would report its peaks (~195).
+    assert np.median(background) == pytest.approx(150, rel=0.15)
+
+
+def sparse_photo(**defects: float) -> Image.Image:
+    """A few lines of text on a full page (text is under 1% of the pixels),
+    spoiled like a phone photo."""
+    return degrade(make_page(HEADER), PhotoDefects(**defects))  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "defects",
+    [
+        {"brightness": 0.6, "grain": 3, "jpeg_quality": 70},
+        {"brightness": 0.5, "grain": 18, "jpeg_quality": 50},
+        {"brightness": 0.35, "grain": 8, "jpeg_quality": 60},
+        {"brightness": 0.75, "grain": 12, "shadow": True, "jpeg_quality": 50},
+    ],
+    ids=["dark", "dark, very grainy", "very dark", "shadowed, grainy"],
+)
+def test_sparse_dark_photos_get_white_paper_and_black_text(
+    defects: dict[str, float],
+) -> None:
+    """Regression: the contrast stretch used to clip the darkest 0.5% of
+    pixels. On a sparse page that is mostly paper grain, which then turned
+    black and buried the text (Tesseract read nothing)."""
+    fixed = pixels(normalize_illumination(sparse_photo(**defects)))
+
+    paper = fixed[1200:2000, 200:1500]  # below the text
+    text = fixed[140:520, 100:700]
+    assert (paper > 240).mean() > 0.98
+    assert text.min() < 40
+    assert (text < 100).mean() > 0.02
+
+
+def test_whiten_paper_leaves_clean_paper_alone() -> None:
+    image = page()
+
+    assert whiten_paper(image) is image
+
+
+def test_whiten_paper_keeps_text_dark() -> None:
+    grey = Image.fromarray(
+        np.clip(pixels(grainy(page(), 10)) * 0.8, 0, 255).astype(np.uint8), "L"
+    )
+
+    white = pixels(whiten_paper(grey))
+
+    assert np.median(white) == 255
+    assert white.min() < 40
+
+
+def test_whiten_paper_ignores_moire_and_keeps_grey_text() -> None:
+    """Regression: a photo of a screen (broad moire stripes) once counted
+    as grain, the white point dropped below the grey text and erased it."""
+    width, height = 1200, 900
+    stripes = 200 + 40 * np.sin(np.arange(width) / 6.0)
+    paper = np.tile(stripes, (height, 1))
+    text = pixels(make_text_image(LINES, size=(width, height)).convert("L")) < 128
+    image = Image.fromarray(np.where(text, 120, paper).astype(np.uint8), "L")
+
+    white = pixels(whiten_paper(image))
+
+    assert white[text].mean() < 180  # grey text is still visibly dark
+
+
 # ---------------------------------------------------------------- noise
 
 
@@ -129,6 +206,50 @@ def grainy(base: Image.Image, strength: float = 25.0) -> Image.Image:
 def test_noise_level_tells_grainy_from_clean() -> None:
     assert noise_level(page()) < 1.0
     assert noise_level(grainy(page())) > image_prep.NOISE_THRESHOLD
+
+
+def jpeg(image: Image.Image, quality: int) -> Image.Image:
+    from io import BytesIO
+
+    return Image.open(BytesIO(encode(image, "JPEG", quality=quality))).convert("L")
+
+
+def test_noise_level_sees_grain_smoothed_by_jpeg() -> None:
+    """JPEG compression softens grain into small blotches that a 3x3
+    median comparison (the old measure) scored as clean."""
+    assert noise_level(jpeg(grainy(page(), 10), 50)) > image_prep.NOISE_THRESHOLD
+
+
+def test_noise_level_sees_grain_in_enlarged_images() -> None:
+    """Small photos are enlarged before clean-up; each grain is then a blob
+    several pixels wide."""
+    small = grainy(page().resize((700, 250)), 15)
+    enlarged = small.resize((2100, 750), Image.Resampling.LANCZOS)
+
+    assert noise_level(enlarged) > image_prep.NOISE_THRESHOLD
+
+
+@pytest.mark.parametrize("factor", [0.5, 0.4])
+def test_resized_clean_text_is_not_mistaken_for_grain(factor: float) -> None:
+    """The old measure scored downscaled text edges as noise."""
+    original = page()
+    small = original.resize(
+        (round(original.width * factor), round(original.height * factor)),
+        Image.Resampling.LANCZOS,
+    )
+    enlarged = jpeg(small, 75).resize(original.size, Image.Resampling.LANCZOS)
+
+    assert noise_level(jpeg(small, 75)) < image_prep.NOISE_THRESHOLD
+    assert noise_level(enlarged) < image_prep.NOISE_THRESHOLD
+
+
+def test_grain_is_measured_relative_to_the_paper() -> None:
+    """Brightening dark paper amplifies its grain by the same factor, so a
+    dimmed copy of a grainy page scores like the original."""
+    noisy = grainy(page(), 10)
+    dark = Image.fromarray((pixels(noisy) * 0.4).astype(np.uint8), "L")
+
+    assert noise_level(dark) == pytest.approx(noise_level(noisy), rel=0.3)
 
 
 def test_reduce_noise_smooths_grainy_images_only() -> None:
